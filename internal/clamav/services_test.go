@@ -3,15 +3,20 @@ package clamav
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/FlightlessWeasel/clamav-webui/internal/config"
 )
 
+func showKey(units ...string) string {
+	return "systemctl show " + strings.Join(units, " ") + " " + showProperties
+}
+
 func TestServiceStateParsing(t *testing.T) {
 	f := newFake().on(
-		"systemctl show clamav-daemon --property=LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestampMonotonic,ActiveEnterTimestamp",
-		fakeResp{stdout: "LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\nActiveEnterTimestamp=Fri 2024-09-20 08:15:11 UTC\n"},
+		showKey("clamav-daemon"),
+		fakeResp{stdout: "Id=clamav-daemon.service\nLoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\nActiveEnterTimestamp=Fri 2024-09-20 08:15:11 UTC\n"},
 	)
 	m := NewManagerWithRunner(config.Defaults(), f)
 
@@ -19,7 +24,7 @@ func TestServiceStateParsing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Active != "active" || st.Sub != "running" || st.Enabled != "enabled" {
+	if st.Unit != "clamav-daemon" || st.Active != "active" || st.Sub != "running" || st.Enabled != "enabled" {
 		t.Errorf("state = %+v", st)
 	}
 	if !st.Installed {
@@ -32,8 +37,8 @@ func TestServiceStateParsing(t *testing.T) {
 
 func TestServiceNotFound(t *testing.T) {
 	f := newFake().on(
-		"systemctl show clamav-clamonacc --property=LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestampMonotonic,ActiveEnterTimestamp",
-		fakeResp{stdout: "LoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\n"},
+		showKey("clamav-clamonacc"),
+		fakeResp{stdout: "Id=clamav-clamonacc.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\n"},
 	)
 	m := NewManagerWithRunner(config.Defaults(), f)
 
@@ -76,18 +81,54 @@ func TestServiceActionRuns(t *testing.T) {
 	}
 }
 
-func TestServicesListsAllManaged(t *testing.T) {
-	f := newFake()
-	for _, u := range ManagedUnits {
-		f.on("systemctl show "+u+" --property=LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestampMonotonic,ActiveEnterTimestamp",
-			fakeResp{stdout: "LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n"})
+func TestServicesBatchesOneCall(t *testing.T) {
+	var sb strings.Builder
+	for i, u := range ManagedUnits {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("Id=" + u + ".service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n")
 	}
+	f := newFake().on(showKey(ManagedUnits...), fakeResp{stdout: sb.String()})
 	m := NewManagerWithRunner(config.Defaults(), f)
+
 	got, err := m.Services(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != len(ManagedUnits) {
 		t.Fatalf("got %d states, want %d", len(got), len(ManagedUnits))
+	}
+	if len(f.calls) != 1 {
+		t.Errorf("expected exactly one systemctl call, got %d: %v", len(f.calls), f.calls)
+	}
+	for _, st := range got {
+		if st.Unit == "" || !st.Installed {
+			t.Errorf("bad state: %+v", st)
+		}
+	}
+}
+
+func TestServicesFillsMissingUnit(t *testing.T) {
+	// Only one unit reported back; the other two must still appear as not-found.
+	f := newFake().on(showKey(ManagedUnits...), fakeResp{
+		stdout: "Id=clamav-daemon.service\nLoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n",
+	})
+	m := NewManagerWithRunner(config.Defaults(), f)
+
+	got, err := m.Services(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d", len(got))
+	}
+	for _, st := range got {
+		if st.Unit == "clamav-daemon" && !st.Installed {
+			t.Error("clamav-daemon should be installed")
+		}
+		if st.Unit != "clamav-daemon" && st.Installed {
+			t.Errorf("%s should be not-found", st.Unit)
+		}
 	}
 }

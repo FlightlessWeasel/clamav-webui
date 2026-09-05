@@ -12,8 +12,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 )
+
+// maxCapturedOutput bounds how much stdout/stderr Run keeps in memory. ClamAV
+// and apt output is small; anything larger is almost certainly a runaway.
+const maxCapturedOutput = 8 << 20 // 8 MiB
 
 // Cmd describes one external command invocation.
 type Cmd struct {
@@ -54,8 +59,8 @@ func (execRunner) Run(ctx context.Context, c Cmd) (Result, error) {
 		cmd.Env = append(os.Environ(), c.Env...)
 	}
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = &limitedWriter{buf: &stdout, n: maxCapturedOutput}
+	cmd.Stderr = &limitedWriter{buf: &stderr, n: maxCapturedOutput}
 
 	err := cmd.Run()
 	res := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
@@ -81,19 +86,28 @@ func (execRunner) Stream(ctx context.Context, c Cmd, onLine func(string)) error 
 		return err
 	}
 
+	// The reader goroutine must consume pr to EOF no matter what, or cmd.Wait's
+	// internal stdout/stderr copy will block writing to pw and never return.
+	// A manual ReadString loop (unlike bufio.Scanner) tolerates arbitrarily
+	// long lines instead of stopping early.
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for sc.Scan() {
-			onLine(sc.Text())
+		br := bufio.NewReaderSize(pr, 64*1024)
+		for {
+			line, err := br.ReadString('\n')
+			if len(line) > 0 {
+				onLine(strings.TrimRight(line, "\r\n"))
+			}
+			if err != nil {
+				return
+			}
 		}
 	}()
 
 	waitErr := cmd.Wait()
-	pw.Close()
+	pw.Close() // unblock the reader with EOF
 	wg.Wait()
 	pr.Close()
 	return waitErr
@@ -102,4 +116,23 @@ func (execRunner) Stream(ctx context.Context, c Cmd, onLine func(string)) error 
 func (execRunner) LookPath(name string) (string, bool) {
 	p, err := exec.LookPath(name)
 	return p, err == nil
+}
+
+// limitedWriter copies into buf until n bytes have been written, then silently
+// discards the rest so a runaway command can't exhaust memory.
+type limitedWriter struct {
+	buf *bytes.Buffer
+	n   int
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if w.n > 0 {
+		take := len(p)
+		if take > w.n {
+			take = w.n
+		}
+		w.buf.Write(p[:take])
+		w.n -= take
+	}
+	return len(p), nil
 }

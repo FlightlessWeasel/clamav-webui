@@ -40,15 +40,38 @@ var serviceActions = map[string]string{
 	"disable": "disable",
 }
 
-// Services returns the state of every managed unit.
+// showProperties is the fixed --property set for `systemctl show`. Id lets us
+// attribute each record when several units are queried at once.
+const showProperties = "--property=Id,LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestamp"
+
+// Services returns the state of every managed unit in one `systemctl show` call.
 func (m *Manager) Services(ctx context.Context) ([]ServiceState, error) {
+	args := append([]string{"show"}, ManagedUnits...)
+	args = append(args, showProperties)
+
+	res, err := m.run.Run(ctx, Cmd{Name: "systemctl", Args: args})
+	if err != nil && len(res.Stdout) == 0 {
+		return nil, fmt.Errorf("systemctl show: %w", err)
+	}
+
+	byUnit := make(map[string]ServiceState)
+	for _, block := range strings.Split(strings.ReplaceAll(string(res.Stdout), "\r\n", "\n"), "\n\n") {
+		if strings.TrimSpace(block) == "" {
+			continue
+		}
+		st := stateFromKV(parseKV(block))
+		if st.Unit != "" {
+			byUnit[st.Unit] = st
+		}
+	}
+
 	out := make([]ServiceState, 0, len(ManagedUnits))
 	for _, u := range ManagedUnits {
-		st, err := m.Service(ctx, u)
-		if err != nil {
-			return nil, err
+		if st, ok := byUnit[u]; ok {
+			out = append(out, st)
+		} else {
+			out = append(out, ServiceState{Unit: u, Load: "not-found", Active: "inactive", Sub: "dead"})
 		}
-		out = append(out, st)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Unit < out[j].Unit })
 	return out, nil
@@ -59,20 +82,24 @@ func (m *Manager) Service(ctx context.Context, unit string) (ServiceState, error
 	if !isManaged(unit) {
 		return ServiceState{}, fmt.Errorf("%w: %s", ErrUnknownUnit, unit)
 	}
-	res, err := m.run.Run(ctx, Cmd{
-		Name: "systemctl",
-		Args: []string{"show", unit,
-			"--property=LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestampMonotonic,ActiveEnterTimestamp"},
-	})
+	res, err := m.run.Run(ctx, Cmd{Name: "systemctl", Args: []string{"show", unit, showProperties}})
 	// `systemctl show` exits 0 even for missing units; a real error means
 	// systemctl itself is unavailable.
 	if err != nil && len(res.Stdout) == 0 {
 		return ServiceState{}, fmt.Errorf("systemctl show %s: %w", unit, err)
 	}
 
-	kv := parseKV(string(res.Stdout))
+	st := stateFromKV(parseKV(string(res.Stdout)))
+	if st.Unit == "" {
+		st.Unit = unit
+	}
+	return st, nil
+}
+
+// stateFromKV builds a ServiceState from parsed `systemctl show` output.
+func stateFromKV(kv map[string]string) ServiceState {
 	st := ServiceState{
-		Unit:    unit,
+		Unit:    strings.TrimSuffix(kv["Id"], ".service"),
 		Load:    kv["LoadState"],
 		Active:  kv["ActiveState"],
 		Sub:     kv["SubState"],
@@ -82,7 +109,7 @@ func (m *Manager) Service(ctx context.Context, unit string) (ServiceState, error
 	if ts := kv["ActiveEnterTimestamp"]; ts != "" {
 		st.SinceUnix = parseSystemdTimestamp(ts)
 	}
-	return st, nil
+	return st
 }
 
 // ServiceAction runs start/stop/restart/enable/disable on a managed unit.

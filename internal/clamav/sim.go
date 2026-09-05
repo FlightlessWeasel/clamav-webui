@@ -86,24 +86,37 @@ func (s *SimRunner) systemctl(args []string) (Result, error) {
 		return Result{}, fmt.Errorf("sim: systemctl with no args")
 	}
 	verb := args[0]
-	if verb == "show" && len(args) >= 2 {
-		u := s.units[args[1]]
-		if u == nil {
-			return out("LoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\n"), nil
+	if verb == "show" {
+		var b strings.Builder
+		wrote := false
+		for _, name := range args[1:] {
+			if strings.HasPrefix(name, "--") {
+				continue
+			}
+			if wrote {
+				b.WriteString("\n")
+			}
+			wrote = true
+			u := s.units[name]
+			if u == nil {
+				fmt.Fprintf(&b, "Id=%s.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nUnitFileState=\n", name)
+				continue
+			}
+			active, sub, enabled := "inactive", "dead", "disabled"
+			if u.active {
+				active, sub = "active", "running"
+			}
+			if u.enabled {
+				enabled = "enabled"
+			}
+			ts := ""
+			if !u.since.IsZero() {
+				ts = u.since.Format("Mon 2006-01-02 15:04:05 MST")
+			}
+			fmt.Fprintf(&b, "Id=%s.service\nLoadState=loaded\nActiveState=%s\nSubState=%s\nUnitFileState=%s\nActiveEnterTimestamp=%s\n",
+				name, active, sub, enabled, ts)
 		}
-		active, sub, enabled := "inactive", "dead", "disabled"
-		if u.active {
-			active, sub = "active", "running"
-		}
-		if u.enabled {
-			enabled = "enabled"
-		}
-		ts := ""
-		if !u.since.IsZero() {
-			ts = u.since.Format("Mon 2006-01-02 15:04:05 MST")
-		}
-		return out("LoadState=loaded\nActiveState=%s\nSubState=%s\nUnitFileState=%s\nActiveEnterTimestamp=%s\n",
-			active, sub, enabled, ts), nil
+		return Result{Stdout: []byte(b.String())}, nil
 	}
 
 	if len(args) >= 2 {

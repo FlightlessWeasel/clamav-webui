@@ -30,7 +30,10 @@ type Server struct {
 	clam     *clamav.Manager
 	bus      *sse.Bus
 	jobs     *worker.Manager
-	mux      http.Handler
+	// sessionSecret is persisted at first start. Sessions are currently
+	// in-memory only; the secret is reserved for signing persistent tokens.
+	sessionSecret string
+	mux           http.Handler
 }
 
 // New builds a Server, its background worker, and the route table. Call Close
@@ -42,15 +45,20 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		slog.Warn("CLAMWEB_DEV_SIM=1: using the in-memory ClamAV simulator, not the real toolchain")
 		clam = clamav.NewManagerWithRunner(cfg, clamav.NewSimRunner())
 	}
+	secret, err := database.EnsureSessionSecret()
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
-		cfg:      cfg,
-		db:       database,
-		version:  version,
-		sessions: auth.NewSessionManager(),
-		logins:   auth.NewLoginLimiter(5, time.Minute),
-		clam:     clam,
-		bus:      bus,
-		jobs:     worker.New(database, bus, 2),
+		cfg:           cfg,
+		db:            database,
+		version:       version,
+		sessions:      auth.NewSessionManager(),
+		logins:        auth.NewLoginLimiter(5, time.Minute),
+		clam:          clam,
+		bus:           bus,
+		jobs:          worker.New(database, bus, 2),
+		sessionSecret: secret,
 	}
 	s.mux = s.routes()
 	return s, nil
@@ -127,9 +135,10 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// decodeJSON reads the request body into v, capping the size at 1 MiB.
-func decodeJSON(r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+// decodeJSON reads the request body into v, capping the size at 1 MiB. Passing
+// w lets MaxBytesReader mark the connection unusable if the limit is hit.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }

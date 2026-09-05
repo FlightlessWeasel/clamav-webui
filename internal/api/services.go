@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/FlightlessWeasel/clamav-webui/internal/clamav"
+	"github.com/FlightlessWeasel/clamav-webui/internal/sse"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -48,9 +49,11 @@ func (s *Server) handleServiceAction(w http.ResponseWriter, r *http.Request) {
 
 	state, err := s.clam.Service(ctx, unit)
 	if err != nil {
+		s.bus.Publish(sse.Event{Type: "service", Data: map[string]string{"unit": unit, "action": action}})
 		writeJSON(w, http.StatusOK, map[string]string{"result": "ok"})
 		return
 	}
+	s.bus.Publish(sse.Event{Type: "service", Data: state})
 	writeJSON(w, http.StatusOK, state)
 }
 

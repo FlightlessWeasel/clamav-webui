@@ -49,6 +49,18 @@ func (d *DB) FinishJob(id int64, status, errMsg string) error {
 	return err
 }
 
+// FailStaleJobs marks every still-queued or still-running job as errored. It is
+// called at startup (a previous process died mid-job) and at shutdown.
+func (d *DB) FailStaleJobs(reason string) (int64, error) {
+	res, err := d.Exec(`
+		UPDATE jobs SET status='error', error=?, finished_at=datetime('now')
+		WHERE status IN ('queued','running')`, reason)
+	if err != nil {
+		return 0, fmt.Errorf("fail stale jobs: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // GetJob returns one job by id.
 func (d *DB) GetJob(id int64) (Job, error) {
 	return scanJob(d.QueryRow(`

@@ -3,6 +3,7 @@ package clamav
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // aptPackages are installed together so the daemon, updater and on-access
@@ -44,7 +45,7 @@ func (m *Manager) aptInstall(ctx context.Context, onLine func(string), onlyUpgra
 	args = append(args, aptPackages...)
 
 	onLine("")
-	onLine("$ apt-get " + joinArgs(args))
+	onLine("$ apt-get " + strings.Join(args, " "))
 	if err := m.run.Stream(ctx, Cmd{
 		Name: "apt-get",
 		Args: args,
@@ -53,15 +54,4 @@ func (m *Manager) aptInstall(ctx context.Context, onLine func(string), onlyUpgra
 		return fmt.Errorf("apt-get install: %w", err)
 	}
 	return nil
-}
-
-func joinArgs(a []string) string {
-	out := ""
-	for i, s := range a {
-		if i > 0 {
-			out += " "
-		}
-		out += s
-	}
-	return out
 }

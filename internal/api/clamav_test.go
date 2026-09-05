@@ -46,7 +46,29 @@ func (s *stubRunner) LookPath(name string) (string, bool) {
 	return "", false
 }
 
-const showProps = " --property=LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestampMonotonic,ActiveEnterTimestamp"
+const showProps = " --property=Id,LoadState,ActiveState,SubState,UnitFileState,ActiveEnterTimestamp"
+
+// batchShowKey/blocks mirror how clamav.Services queries all managed units in
+// one `systemctl show` call.
+func batchShowKey() string {
+	return "systemctl show " + strings.Join(clamav.ManagedUnits, " ") + showProps
+}
+
+func showBlocks(active string) string {
+	sub := "dead"
+	if active == "active" {
+		sub = "running"
+	}
+	var b strings.Builder
+	for i, u := range clamav.ManagedUnits {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Id=" + u + ".service\nLoadState=loaded\nActiveState=" + active +
+			"\nSubState=" + sub + "\nUnitFileState=enabled\n")
+	}
+	return b.String()
+}
 
 // authedServer returns a server with setup done, a session cookie, the CSRF
 // token, and its clam Manager pointed at the given runner.
@@ -65,9 +87,7 @@ func authedServer(t *testing.T, r clamav.Runner) (*Server, []*http.Cookie, strin
 
 func TestServicesEndpoint(t *testing.T) {
 	r := newStub()
-	for _, u := range clamav.ManagedUnits {
-		r.out["systemctl show "+u+showProps] = "LoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n"
-	}
+	r.out[batchShowKey()] = showBlocks("inactive")
 	s, cookies, _ := authedServer(t, r)
 
 	rec := do(t, s, http.MethodGet, "/api/services", "", cookies, "")
@@ -99,7 +119,7 @@ func TestServiceActionEndpointValidates(t *testing.T) {
 func TestServiceActionEndpointRuns(t *testing.T) {
 	r := newStub()
 	r.out["systemctl restart clamav-daemon"] = ""
-	r.out["systemctl show clamav-daemon"+showProps] = "LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n"
+	r.out["systemctl show clamav-daemon"+showProps] = "Id=clamav-daemon.service\nLoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n"
 	s, cookies, csrf := authedServer(t, r)
 
 	rec := do(t, s, http.MethodPost, "/api/services/clamav-daemon/restart", "", cookies, csrf)
@@ -156,9 +176,7 @@ func TestDashboardEndpoint(t *testing.T) {
 	r.have["clamscan"] = true
 	r.out["clamscan --version"] = "ClamAV 1.0.3/27000/Fri Sep 20 08:15:11 2024"
 	r.out["apt-cache policy clamav"] = "clamav:\n  Installed: 1.0.3+dfsg-1\n  Candidate: 1.0.3+dfsg-1\n"
-	for _, u := range clamav.ManagedUnits {
-		r.out["systemctl show "+u+showProps] = "LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n"
-	}
+	r.out[batchShowKey()] = showBlocks("active")
 	s, cookies, _ := authedServer(t, r)
 
 	rec := do(t, s, http.MethodGet, "/api/dashboard", "", cookies, "")

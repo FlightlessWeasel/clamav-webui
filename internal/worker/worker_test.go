@@ -84,6 +84,38 @@ func TestJobPanicIsCaught(t *testing.T) {
 	}
 }
 
+func TestStaleJobsFailedOnStart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.db")
+
+	d1, err := db.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a job left mid-flight by a killed process.
+	id, _ := d1.CreateJob("scan", nil)
+	if err := d1.SetJobRunning(id); err != nil {
+		t.Fatal(err)
+	}
+	d1.Close()
+
+	d2, err := db.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d2.Close()
+	m := New(d2, sse.NewBus(), 1)
+	defer m.Shutdown()
+
+	j, err := d2.GetJob(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Status != "error" || j.Error == "" {
+		t.Fatalf("stale job not reconciled: %+v", j)
+	}
+}
+
 func TestEventsPublished(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 
@@ -48,7 +49,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req passwordRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, jsonErrMsg(err))
 		return
 	}
@@ -94,7 +95,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req passwordRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, jsonErrMsg(err))
 		return
 	}
@@ -125,11 +126,10 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func clientIP(r *http.Request) string {
 	// chi's RealIP middleware has already normalised RemoteAddr from proxy
 	// headers when present.
-	host := r.RemoteAddr
-	if i := strings.LastIndexByte(host, ':'); i > 0 && !strings.Contains(host[i+1:], "]") {
-		host = host[:i]
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
-	return strings.Trim(host, "[]")
+	return r.RemoteAddr
 }
 
 func jsonErrMsg(err error) string {
