@@ -33,8 +33,14 @@ func (d *DB) AddQuarantine(storeName, origPath, signature, sha256 string, scanID
 
 // SetQuarantineStatus moves an item to "restored" or "deleted".
 func (d *DB) SetQuarantineStatus(id int64, status string) error {
-	_, err := d.Exec(`UPDATE quarantine SET status=?, updated_at=datetime('now') WHERE id=?`, status, id)
-	return err
+	res, err := d.Exec(`UPDATE quarantine SET status=?, updated_at=datetime('now') WHERE id=?`, status, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // GetQuarantine returns one item by id.
@@ -42,15 +48,9 @@ func (d *DB) GetQuarantine(id int64) (QuarantineItem, error) {
 	return scanQuarantineRow(d.QueryRow(quarantineSelect+` WHERE id=?`, id))
 }
 
-// ListQuarantine returns items, newest first. When heldOnly is true, only
-// items still in the store are returned.
-func (d *DB) ListQuarantine(heldOnly bool) ([]QuarantineItem, error) {
-	q := quarantineSelect
-	if heldOnly {
-		q += ` WHERE status='held'`
-	}
-	q += ` ORDER BY id DESC`
-	rows, err := d.Query(q)
+// ListQuarantine returns every item (held, restored and deleted), newest first.
+func (d *DB) ListQuarantine() ([]QuarantineItem, error) {
+	rows, err := d.Query(quarantineSelect + ` ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}

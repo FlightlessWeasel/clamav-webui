@@ -21,7 +21,7 @@ type quarantineRequest struct {
 }
 
 func (s *Server) handleListQuarantine(w http.ResponseWriter, r *http.Request) {
-	items, err := s.db.ListQuarantine(false)
+	items, err := s.db.ListQuarantine()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -36,12 +36,12 @@ func (s *Server) handleQuarantineFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, jsonErrMsg(err))
 		return
 	}
-	if !filepath.IsAbs(req.Path) {
-		writeError(w, http.StatusBadRequest, "path must be absolute")
+	if err := s.checkQuarantinePath(req.Path); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	sc, err := s.qstore.Hold(req.Path, req.Signature)
+	sc, err := s.qstore.Hold(req.Path, req.Signature, req.ScanID)
 	if err != nil {
 		slog.Error("quarantine: hold", "path", req.Path, "err", err)
 		writeError(w, http.StatusBadGateway, "could not quarantine file: "+err.Error())
@@ -54,7 +54,11 @@ func (s *Server) handleQuarantineFile(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.db.AddQuarantine(sc.Name, sc.OrigPath, sc.Signature, sc.SHA256, scanID, sc.OrigMode)
 	if err != nil {
-		slog.Error("quarantine: record", "err", err)
+		// Don't lose the file: put it back and report failure.
+		slog.Error("quarantine: record failed, restoring file", "store_name", sc.Name, "orig", sc.OrigPath, "err", err)
+		if rerr := s.qstore.Restore(sc); rerr != nil {
+			slog.Error("quarantine: restore after failed record ALSO failed", "store_name", sc.Name, "err", rerr)
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -65,7 +69,11 @@ func (s *Server) handleQuarantineFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.bus.Publish(sse.Event{Type: "quarantine", Data: map[string]any{"id": id, "action": "held", "path": sc.OrigPath}})
-	item, _ := s.db.GetQuarantine(id)
+	item, err := s.db.GetQuarantine(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -78,20 +86,26 @@ func (s *Server) handleRestoreQuarantine(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "item is not currently held")
 		return
 	}
-	err := s.qstore.Restore(item.StoreName, item.OrigPath, item.OrigMode)
-	if errors.Is(err, quarantine.ErrOriginExists) {
+
+	err := s.qstore.Restore(s.sidecarFromItem(item))
+	switch {
+	case errors.Is(err, quarantine.ErrOriginExists):
 		writeError(w, http.StatusConflict, "a file already exists at the original path")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, quarantine.ErrOriginParentGone):
+		writeError(w, http.StatusConflict, "the original directory no longer exists")
+		return
+	case err != nil:
 		slog.Error("quarantine: restore", "id", item.ID, "err", err)
 		writeError(w, http.StatusBadGateway, "restore failed: "+err.Error())
 		return
 	}
-	_ = s.db.SetQuarantineStatus(item.ID, "restored")
+
+	if err := s.db.SetQuarantineStatus(item.ID, "restored"); err != nil {
+		slog.Error("quarantine: status after restore", "id", item.ID, "err", err)
+	}
 	s.bus.Publish(sse.Event{Type: "quarantine", Data: map[string]any{"id": item.ID, "action": "restored"}})
-	next, _ := s.db.GetQuarantine(item.ID)
-	writeJSON(w, http.StatusOK, next)
+	s.writeQuarantineItem(w, item.ID)
 }
 
 func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) {
@@ -106,10 +120,46 @@ func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	_ = s.db.SetQuarantineStatus(item.ID, "deleted")
+	if err := s.db.SetQuarantineStatus(item.ID, "deleted"); err != nil {
+		slog.Error("quarantine: status after delete", "id", item.ID, "err", err)
+	}
 	s.bus.Publish(sse.Event{Type: "quarantine", Data: map[string]any{"id": item.ID, "action": "deleted"}})
-	next, _ := s.db.GetQuarantine(item.ID)
-	writeJSON(w, http.StatusOK, next)
+	s.writeQuarantineItem(w, item.ID)
+}
+
+// checkQuarantinePath refuses relative paths, anything outside the browse root,
+// and the app's own state directory (so the SQLite DB can't be quarantined).
+func (s *Server) checkQuarantinePath(p string) error {
+	if !filepath.IsAbs(p) {
+		return errors.New("path must be absolute")
+	}
+	clean := filepath.Clean(p)
+	if withinRoot(clean, filepath.Clean(s.cfg.ConfigDir)) {
+		return errors.New("cannot quarantine a file inside the application's data directory")
+	}
+	if !withinRoot(clean, filepath.Clean(s.cfg.BrowseRoot)) {
+		return errors.New("path is outside the allowed root")
+	}
+	return nil
+}
+
+func (s *Server) sidecarFromItem(it db.QuarantineItem) quarantine.Sidecar {
+	if sc, err := s.qstore.SidecarFor(it.StoreName); err == nil {
+		return sc
+	}
+	return quarantine.Sidecar{
+		Name: it.StoreName, OrigPath: it.OrigPath, OrigMode: it.OrigMode,
+		Signature: it.Signature, SHA256: it.SHA256, ScanID: it.ScanID,
+	}
+}
+
+func (s *Server) writeQuarantineItem(w http.ResponseWriter, id int64) {
+	item, err := s.db.GetQuarantine(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (s *Server) quarantineFromURL(w http.ResponseWriter, r *http.Request) (db.QuarantineItem, bool) {

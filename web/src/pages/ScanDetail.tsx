@@ -1,38 +1,19 @@
-import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { cancelScan, getScan, getScanFindings, quarantineFile } from "../api/client";
+import { cancelScan, getScan } from "../api/client";
 import { useAction, useAsync } from "../lib/useAsync";
 import { useEvents } from "../lib/useEvents";
 import { Alert, Button, Card, Spinner } from "../components/ui";
 import ScanStatusBadge from "../components/ScanStatusBadge";
+import FindingsTable from "../components/FindingsTable";
 
 export default function ScanDetail() {
   const { id } = useParams();
   const scanId = Number(id);
   const scan = useAsync(() => getScan(scanId), [scanId]);
-  const findings = useAsync(() => getScanFindings(scanId), [scanId]);
-  const [qBusy, setQBusy] = useState<number>();
-  const [qErr, setQErr] = useState<string>();
 
-  useEvents(() => {
-    scan.reload();
-    findings.reload();
-  }, ["job", "scan-finding", "quarantine"]);
+  useEvents(() => scan.reload(), ["job", "scan-progress"]);
 
   const cancel = useAction(() => cancelScan(scanId), () => scan.reload());
-
-  const quarantine = async (findingId: number, path: string, signature: string) => {
-    setQBusy(findingId);
-    setQErr(undefined);
-    try {
-      await quarantineFile({ path, signature, scan_id: scanId, finding_id: findingId });
-      findings.reload();
-    } catch (e) {
-      setQErr((e as Error).message);
-    } finally {
-      setQBusy(undefined);
-    }
-  };
 
   if (scan.loading && !scan.data) return <Spinner />;
   if (scan.error) return <Alert>{scan.error.message}</Alert>;
@@ -40,7 +21,6 @@ export default function ScanDetail() {
 
   const s = scan.data;
   const running = s.status === "running" || s.status === "queued";
-  const rows = findings.data?.findings ?? [];
 
   return (
     <>
@@ -75,44 +55,8 @@ export default function ScanDetail() {
         </dl>
       </Card>
 
-      <Card title={`Findings (${rows.length})`}>
-        {qErr && <Alert>{qErr}</Alert>}
-        {rows.length === 0 ? (
-          <p className="text-sm text-zinc-500">{running ? "Scanning…" : "No infected files."}</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs text-zinc-500">
-                <tr>
-                  <th className="py-1 pr-4">Path</th>
-                  <th className="py-1 pr-4">Signature</th>
-                  <th className="py-1">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((f) => (
-                  <tr key={f.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                    <td className="py-1.5 pr-4 font-mono text-xs">{f.path}</td>
-                    <td className="py-1.5 pr-4">{f.signature}</td>
-                    <td className="py-1.5">
-                      {f.action === "none" ? (
-                        <Button
-                          variant="secondary"
-                          disabled={qBusy === f.id}
-                          onClick={() => quarantine(f.id, f.path, f.signature)}
-                        >
-                          {qBusy === f.id ? "Moving…" : "Quarantine"}
-                        </Button>
-                      ) : (
-                        <span className="text-zinc-500">{f.action}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <Card title="Findings">
+        <FindingsTable scanId={scanId} running={running} />
       </Card>
     </>
   );

@@ -4,6 +4,7 @@ import { createScan, type ScanOptions } from "../api/client";
 import { Alert, Button, Card } from "../components/ui";
 import PathPicker from "../components/PathPicker";
 import JobConsole from "../components/JobConsole";
+import FindingsTable from "../components/FindingsTable";
 
 export default function Scan() {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ export default function Scan() {
   const [opts, setOpts] = useState<ScanOptions>({ recursive: true });
   const [jobId, setJobId] = useState<number>();
   const [scanId, setScanId] = useState<number>();
+  const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
 
@@ -114,16 +116,21 @@ export default function Scan() {
       )}
 
       {jobId && scanId && (
-        <Card
-          title="Running"
-          actions={
-            <Button variant="secondary" onClick={() => navigate(`/scans/${scanId}`)}>
-              Open scan detail
-            </Button>
-          }
-        >
-          <JobConsole jobId={jobId} onDone={() => navigate(`/scans/${scanId}`)} />
-        </Card>
+        <>
+          <Card
+            title="Running"
+            actions={
+              <Button variant="secondary" onClick={() => navigate(`/scans/${scanId}`)}>
+                Open scan detail
+              </Button>
+            }
+          >
+            <JobConsole jobId={jobId} onDone={() => setDone(true)} />
+          </Card>
+          <Card title="Findings">
+            <FindingsTable scanId={scanId} running={!done} />
+          </Card>
+        </>
       )}
     </>
   );

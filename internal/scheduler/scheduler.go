@@ -42,7 +42,9 @@ func (s *Scheduler) Start() error {
 	if s.cron != nil {
 		return nil
 	}
-	s.cron = cron.New()
+	// SkipIfStillRunning guards against a slow callback; runScheduledScan also
+	// skips a tick while the schedule's previous scan is unfinished.
+	s.cron = cron.New(cron.WithChain(cron.SkipIfStillRunning(cron.DiscardLogger)))
 	s.cron.Start()
 	return s.syncLocked()
 }
@@ -84,13 +86,12 @@ func (s *Scheduler) syncLocked() error {
 		delete(s.entries, id)
 	}
 	for _, sc := range want {
-		id := sc.ID
-		entryID, err := s.cron.AddFunc(sc.CronExpr, func() { s.run(id) })
+		entryID, err := s.cron.AddFunc(sc.CronExpr, func() { s.run(sc.ID) })
 		if err != nil {
-			slog.Error("scheduler: bad cron expr, skipping", "schedule", id, "expr", sc.CronExpr, "err", err)
+			slog.Error("scheduler: bad cron expr, skipping", "schedule", sc.ID, "expr", sc.CronExpr, "err", err)
 			continue
 		}
-		s.entries[id] = entryID
+		s.entries[sc.ID] = entryID
 	}
 	slog.Info("scheduler: synced", "active", len(s.entries))
 	return nil

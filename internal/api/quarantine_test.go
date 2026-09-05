@@ -13,6 +13,7 @@ func TestQuarantineHoldRestoreDelete(t *testing.T) {
 	s, cookies, csrf := authedServer(t, newStub())
 
 	work := t.TempDir()
+	s.cfg.BrowseRoot = work
 	victim := filepath.Join(work, "eicar.com")
 	if err := os.WriteFile(victim, []byte("bad payload"), 0o644); err != nil {
 		t.Fatal(err)
@@ -70,6 +71,7 @@ func TestQuarantineHoldRestoreDelete(t *testing.T) {
 func TestQuarantineDeleteRemovesBlob(t *testing.T) {
 	s, cookies, csrf := authedServer(t, newStub())
 	work := t.TempDir()
+	s.cfg.BrowseRoot = work
 	victim := filepath.Join(work, "f")
 	os.WriteFile(victim, []byte("payload"), 0o644)
 
@@ -101,5 +103,25 @@ func TestQuarantineRejectsRelativePath(t *testing.T) {
 	rec := do(t, s, http.MethodPost, "/api/quarantine", `{"path":"relative/x","signature":"S"}`, cookies, csrf)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestQuarantineRefusesConfinedPaths(t *testing.T) {
+	s, cookies, csrf := authedServer(t, newStub())
+	root := t.TempDir()
+	s.cfg.BrowseRoot = root
+
+	// Inside the app's data directory.
+	inCfg := strconv.Quote(filepath.Join(s.cfg.ConfigDir, "clamav-webui.db"))
+	rec := do(t, s, http.MethodPost, "/api/quarantine", `{"path":`+inCfg+`,"signature":"S"}`, cookies, csrf)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("data-dir path: status = %d, want 400", rec.Code)
+	}
+
+	// Outside the browse root.
+	outside := strconv.Quote(filepath.Join(t.TempDir(), "elsewhere"))
+	rec = do(t, s, http.MethodPost, "/api/quarantine", `{"path":`+outside+`,"signature":"S"}`, cookies, csrf)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("outside-root path: status = %d, want 400", rec.Code)
 	}
 }

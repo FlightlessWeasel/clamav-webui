@@ -9,6 +9,8 @@ vi.mock("../api/client", () => ({
   createScan: (...a: unknown[]) => createScan(...a),
   browse: (...a: unknown[]) => browse(...a),
   getJob: vi.fn().mockResolvedValue({ id: 1, status: "running", log: "" }),
+  getScanFindings: vi.fn().mockResolvedValue({ findings: [] }),
+  quarantineFile: vi.fn(),
 }));
 vi.mock("../lib/useEvents", () => ({ useEvents: () => {} }));
 

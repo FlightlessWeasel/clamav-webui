@@ -110,6 +110,9 @@ func (s *Server) handleRunSchedule(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.db.GetSchedule(id); errors.Is(err, db.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "schedule not found")
 		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 	s.runScheduledScan(id)
 	writeJSON(w, http.StatusAccepted, map[string]string{"result": "started"})
@@ -146,6 +149,16 @@ func (s *Server) runScheduledScan(scheduleID int64) {
 		slog.Error("scheduled scan: load", "schedule", scheduleID, "err", err)
 		return
 	}
+	// Skip this run if the schedule's previous scan hasn't finished, so a
+	// tight cron over a slow scan doesn't pile up rows and jobs.
+	if sch.LastRunID != 0 {
+		if prev, err := s.db.GetScan(sch.LastRunID); err == nil &&
+			(prev.Status == "queued" || prev.Status == "running") {
+			slog.Info("scheduled scan: previous run still active, skipping", "schedule", scheduleID, "scan", prev.ID)
+			return
+		}
+	}
+
 	var opts clamav.ScanOptions
 	_ = json.Unmarshal(sch.Options, &opts)
 
