@@ -47,10 +47,17 @@ func (f *fakeFS) WriteFile(name string, data []byte, _ os.FileMode) error {
 
 func (f *fakeFS) Rename(oldpath, newpath string) error {
 	ob, nb := filepath.Base(oldpath), filepath.Base(newpath)
-	if ff, ok := f.files[ob]; ok {
-		f.files[nb] = ff
-		delete(f.files, ob)
+	ff, ok := f.files[ob]
+	if !ok {
+		return os.ErrNotExist
 	}
+	f.files[nb] = ff
+	delete(f.files, ob)
+	return nil
+}
+
+func (f *fakeFS) Remove(name string) error {
+	delete(f.files, filepath.Base(name))
 	return nil
 }
 

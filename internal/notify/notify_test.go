@@ -69,6 +69,24 @@ func TestSetConfigKeepsExistingSecret(t *testing.T) {
 	}
 }
 
+func TestSetConfigKeepsOmittedSection(t *testing.T) {
+	d := New(Config{SMTP: &SMTPConfig{Host: "mail", Password: "s3cret"}, Webhook: &WebhookConfig{URL: "u"}})
+	d.SetConfig(Config{Enabled: true}) // SMTP + Webhook omitted entirely
+	got := d.Config()
+	if got.SMTP == nil || got.SMTP.Password != "s3cret" || got.Webhook == nil {
+		t.Fatalf("omitted sections were dropped: %+v", got)
+	}
+}
+
+func TestStaleDays(t *testing.T) {
+	if got := New(Config{}).StaleDays(); got != 7 {
+		t.Errorf("default StaleDays = %d, want 7", got)
+	}
+	if got := New(Config{StaleDays: 3}).StaleDays(); got != 3 {
+		t.Errorf("StaleDays = %d, want 3", got)
+	}
+}
+
 func TestRedactedHidesSecrets(t *testing.T) {
 	c := Config{SMTP: &SMTPConfig{Password: "p"}, Ntfy: &NtfyConfig{Token: "tok"}}.Redacted()
 	if c.SMTP.Password == "p" || c.Ntfy.Token == "tok" {

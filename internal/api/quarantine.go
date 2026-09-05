@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/FlightlessWeasel/clamav-webui/internal/db"
 	"github.com/FlightlessWeasel/clamav-webui/internal/quarantine"
@@ -131,7 +132,7 @@ func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) 
 // the app's own state directory. It guards both quarantine targets and
 // on-access watch paths.
 func (s *Server) checkTargetPath(p string) error {
-	if !filepath.IsAbs(p) {
+	if !filepath.IsAbs(p) && !strings.HasPrefix(p, "/") {
 		return errors.New("path must be absolute")
 	}
 	clean := filepath.Clean(p)

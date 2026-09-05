@@ -1,13 +1,18 @@
 package clamav
 
-import "github.com/FlightlessWeasel/clamav-webui/internal/config"
+import (
+	"sync"
 
-// Manager is the entry point for all ClamAV operations. It is safe for
-// concurrent use; the underlying Runner calls are stateless.
+	"github.com/FlightlessWeasel/clamav-webui/internal/config"
+)
+
+// Manager is the entry point for all ClamAV operations. Runner calls are
+// stateless; confMu serialises the read-modify-write of the config files.
 type Manager struct {
-	run  Runner
-	fsys FS
-	cfg  config.Config
+	run    Runner
+	fsys   FS
+	cfg    config.Config
+	confMu sync.Mutex
 }
 
 // NewManager returns a Manager that runs real commands and reads the real

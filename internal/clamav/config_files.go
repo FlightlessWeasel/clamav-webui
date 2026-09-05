@@ -2,7 +2,9 @@ package clamav
 
 import (
 	"fmt"
-	"sort"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -108,76 +110,146 @@ func (m *Manager) ReadConf(which string) (ConfView, error) {
 	return view, nil
 }
 
-// WriteConf applies updates (whitelisted keys only) to the config file: each
-// key in updates has all its existing lines removed and the new values
-// appended; an empty slice removes the key. Non-whitelisted lines and comments
-// are preserved. The write is atomic (temp file + rename) and keeps a .bak.
+var sizeRE = regexp.MustCompile(`(?i)^\d+[kmg]?$`)
+
+// validateConfValue checks a single value against a key's declared kind.
+func validateConfValue(k ConfKey, v string) error {
+	switch k.Kind {
+	case KindInt:
+		if _, err := strconv.Atoi(v); err != nil {
+			return fmt.Errorf("%w: %s must be an integer, got %q", ErrConfValueInvalid, k.Name, v)
+		}
+	case KindSize:
+		if !sizeRE.MatchString(v) {
+			return fmt.Errorf("%w: %s must be a size like 100M, got %q", ErrConfValueInvalid, k.Name, v)
+		}
+	case KindPath:
+		if !strings.HasPrefix(v, "/") {
+			return fmt.Errorf("%w: %s must be an absolute path, got %q", ErrConfValueInvalid, k.Name, v)
+		}
+	}
+	return nil
+}
+
+// normalizeConfValue canonicalises a value for writing (booleans -> yes/no).
+func normalizeConfValue(k ConfKey, v string) string {
+	if k.Kind == KindBool {
+		if confValueBool(v) {
+			return "yes"
+		}
+		return "no"
+	}
+	return v
+}
+
+// WriteConf applies updates (whitelisted keys only) to the config file. Each
+// updated key's first line is rewritten in place with the new value(s) and any
+// further lines for it are dropped; an empty value set removes the key; a key
+// not already present is appended. Non-whitelisted lines and comments are
+// untouched. The write is atomic (same-dir temp + rename), preserves the
+// file's mode, and keeps a .bak.
 func (m *Manager) WriteConf(which string, updates map[string][]string) error {
 	keys, _, _, err := confKeysFor(which)
 	if err != nil {
 		return err
 	}
-	allowed := map[string]bool{}
+	byName := map[string]ConfKey{}
 	for _, k := range keys {
-		allowed[k.Name] = true
+		byName[k.Name] = k
 	}
-	for k := range updates {
-		if !allowed[k] {
-			return fmt.Errorf("%w: %s", ErrConfKeyNotAllowed, k)
+
+	// Validate keys and values up front; write nothing on any error.
+	cleaned := map[string][]string{}
+	for name, vals := range updates {
+		k, ok := byName[name]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrConfKeyNotAllowed, name)
 		}
+		var kept []string
+		for _, v := range vals {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
+			if err := validateConfValue(k, v); err != nil {
+				return err
+			}
+			kept = append(kept, normalizeConfValue(k, v))
+		}
+		cleaned[name] = kept
 	}
+
+	m.confMu.Lock()
+	defer m.confMu.Unlock()
 
 	path := m.confPath(which)
 	orig, err := m.fsys.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
+	mode := os.FileMode(0o644)
+	if fi, err := m.fsys.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
 
+	written := map[string]bool{}
 	var out []string
-	for _, line := range strings.Split(string(orig), "\n") {
-		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
+	for _, raw := range strings.Split(string(orig), "\n") {
+		line := strings.TrimRight(raw, "\r")
+		trimmed := strings.TrimSpace(line)
+		key := ""
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			key := strings.Fields(trimmed)[0]
-			if _, replacing := updates[key]; replacing {
-				continue // drop; we re-add (or not) below
-			}
+			key = strings.Fields(trimmed)[0]
 		}
-		out = append(out, strings.TrimRight(line, "\r"))
-	}
-	// Trim a trailing blank run, then append our keys.
-	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
-		out = out[:len(out)-1]
-	}
-
-	changed := make([]string, 0, len(updates))
-	for k := range updates {
-		changed = append(changed, k)
-	}
-	sort.Strings(changed)
-	for _, k := range changed {
-		for _, v := range updates[k] {
-			v = strings.TrimSpace(v)
-			if v == "" {
-				continue
-			}
-			out = append(out, k+" "+v)
+		vals, replacing := cleaned[key]
+		if !replacing {
+			out = append(out, line)
+			continue
+		}
+		if written[key] {
+			continue // subsequent line for an already-rewritten key: drop
+		}
+		written[key] = true
+		for _, v := range vals {
+			out = append(out, key+" "+v)
 		}
 	}
 
-	body := strings.Join(out, "\n") + "\n"
+	// Keys that weren't already in the file get appended.
+	for name, vals := range cleaned {
+		if written[name] || len(vals) == 0 {
+			continue
+		}
+		for _, v := range vals {
+			out = append(out, name+" "+v)
+		}
+	}
 
-	// temp + rename, with a .bak of the previous content.
-	if err := m.fsys.WriteFile(path+".bak", orig, 0o600); err != nil {
+	body := strings.Join(out, "\n")
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+
+	if err := m.fsys.WriteFile(path+".bak", orig, mode); err != nil {
 		return fmt.Errorf("write backup: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := m.fsys.WriteFile(tmp, []byte(body), 0o644); err != nil {
+	if err := m.fsys.WriteFile(tmp, []byte(body), mode); err != nil {
 		return fmt.Errorf("write temp: %w", err)
 	}
 	if err := m.fsys.Rename(tmp, path); err != nil {
+		_ = m.fsys.Remove(tmp)
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	return nil
+}
+
+// RestoreConfBackup rolls a config file back to its .bak (best-effort).
+func (m *Manager) RestoreConfBackup(which string) error {
+	path := m.confPath(which)
+	m.confMu.Lock()
+	defer m.confMu.Unlock()
+	return m.fsys.Rename(path+".bak", path)
 }
 
 // confValueBool interprets a ClamAV boolean string.

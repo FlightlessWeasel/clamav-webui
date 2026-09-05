@@ -122,3 +122,40 @@ func TestReadConfUnknownTarget(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestWriteConfValidatesValues(t *testing.T) {
+	m, fs := confMgr(t, map[string]string{"clamd.conf": sampleClamd})
+	bad := []map[string][]string{
+		{"MaxThreads": {"lots"}},
+		{"MaxFileSize": {"huge"}},
+		{"OnAccessIncludePath": {"relative/path"}},
+	}
+	for _, u := range bad {
+		if err := m.WriteConf("clamd", u); !errors.Is(err, ErrConfValueInvalid) {
+			t.Errorf("WriteConf(%v) err = %v, want ErrConfValueInvalid", u, err)
+		}
+	}
+	// The file was not touched by a rejected write.
+	out, _ := fs.ReadFile("clamd.conf")
+	if string(out) != sampleClamd {
+		t.Errorf("file changed by a rejected write:\n%s", out)
+	}
+}
+
+func TestWriteConfInPlaceAndBoolNormalise(t *testing.T) {
+	m, fs := confMgr(t, map[string]string{
+		"clamd.conf": "LogVerbose false\nMaxThreads 12\n# trailing comment\nUser clamav\n",
+	})
+	if err := m.WriteConf("clamd", map[string][]string{"LogVerbose": {"1"}}); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := fs.ReadFile("clamd.conf")
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	// LogVerbose stays on line 1 (in place), normalised to "yes".
+	if lines[0] != "LogVerbose yes" {
+		t.Errorf("line 0 = %q, want 'LogVerbose yes'", lines[0])
+	}
+	if lines[len(lines)-1] != "User clamav" {
+		t.Errorf("trailing lines disturbed:\n%s", out)
+	}
+}

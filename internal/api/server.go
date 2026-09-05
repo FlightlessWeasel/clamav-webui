@@ -37,6 +37,7 @@ type Server struct {
 	qstore   *quarantine.Store
 	sched    *scheduler.Scheduler
 	notify   *notify.Dispatcher
+	tailer   *tailerCtl
 	bgCancel context.CancelFunc
 	// sessionSecret is persisted at first start. Sessions are currently
 	// in-memory only; the secret is reserved for signing persistent tokens.
@@ -83,6 +84,7 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		jobs:          worker.New(database, bus, 2),
 		qstore:        qstore,
 		notify:        notify.New(ncfg),
+		tailer:        &tailerCtl{},
 		bgCancel:      bgCancel,
 		sessionSecret: secret,
 	}
@@ -103,10 +105,11 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 // Handler is the root http.Handler.
 func (s *Server) Handler() http.Handler { return s.mux }
 
-// Close stops the background worker, scheduler and monitor goroutines.
+// Close stops the background worker, scheduler, notifier and monitor goroutines.
 func (s *Server) Close() {
 	s.bgCancel()
 	s.sched.Stop()
+	s.notify.Stop()
 	s.jobs.Shutdown()
 }
 

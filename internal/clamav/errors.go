@@ -14,4 +14,6 @@ var (
 	ErrUnknownConf = errors.New("clamav: unknown config file")
 	// ErrConfKeyNotAllowed is returned when a write touches a non-whitelisted key.
 	ErrConfKeyNotAllowed = errors.New("clamav: config key is not editable")
+	// ErrConfValueInvalid is returned when a config value fails its type check.
+	ErrConfValueInvalid = errors.New("clamav: config value is invalid")
 )

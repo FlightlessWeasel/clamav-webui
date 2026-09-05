@@ -55,16 +55,17 @@ func TestOnAccessGetPut(t *testing.T) {
 	r.out["systemctl restart clamav-daemon"] = ""
 	r.out["systemctl enable clamav-clamonacc"] = ""
 	r.out["systemctl restart clamav-clamonacc"] = ""
+	r.out["systemctl show clamav-daemon"+showProps] = "Id=clamav-daemon.service\nLoadState=loaded\nActiveState=active\nSubState=running\n"
+	r.out["systemctl enable clamav-daemon"] = ""
 	s, cookies, csrf := authedServer(t, r)
-	work := t.TempDir()
-	s.cfg.BrowseRoot = work
+	s.cfg.BrowseRoot = "/"
 
 	gr := do(t, s, http.MethodGet, "/api/onaccess", "", cookies, "")
 	if gr.Code != http.StatusOK {
 		t.Fatalf("get: %d body=%s", gr.Code, gr.Body)
 	}
 
-	body := `{"enabled":true,"paths":["` + filepathToSlash(work) + `"],"prevention":true}`
+	body := `{"enabled":true,"paths":["/srv/watched"],"prevention":true}`
 	pr := do(t, s, http.MethodPut, "/api/onaccess", body, cookies, csrf)
 	if pr.Code != http.StatusOK {
 		t.Fatalf("put: %d body=%s", pr.Code, pr.Body)
@@ -136,5 +137,3 @@ func TestNotificationsConfigRoundTrip(t *testing.T) {
 		t.Errorf("test send: status = %d, want 502", tr.Code)
 	}
 }
-
-func filepathToSlash(p string) string { return strings.ReplaceAll(p, "\\", "/") }

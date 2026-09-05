@@ -229,6 +229,7 @@ export const changePassword = (current: string, next: string) =>
 export type NotifyConfig = {
   enabled: boolean;
   events: string[];
+  stale_days?: number;
   smtp?: { host: string; port: number; username?: string; password?: string; from: string; to: string; starttls?: boolean };
   webhook?: { url: string };
   ntfy?: { base_url?: string; topic: string; token?: string };

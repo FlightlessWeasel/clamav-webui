@@ -85,6 +85,15 @@ export default function NotificationSettings() {
         <p className="mt-1 text-xs text-zinc-500">None checked = send for every event.</p>
       </div>
 
+      <div className="mt-3">
+        <Field
+          label="Signatures stale after (days)"
+          type="number"
+          value={String(cfg.stale_days ?? 7)}
+          onChange={(e) => patch({ stale_days: Number(e.target.value) || 7 })}
+        />
+      </div>
+
       <fieldset className="mt-4 space-y-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
         <legend className="text-sm font-medium">ntfy</legend>
         <Field

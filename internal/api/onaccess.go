@@ -52,6 +52,10 @@ func (s *Server) handlePutOnAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.bus.Publish(sse.Event{Type: "onaccess", Data: map[string]any{"enabled": cfg.Enabled}})
-	st, _ := s.clam.OnAccessStatus(context.WithoutCancel(ctx))
+	s.tailerKick() // re-evaluate the journal follow (start on enable, drop it on disable)
+
+	stCtx, stCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stCancel()
+	st, _ := s.clam.OnAccessStatus(stCtx)
 	writeJSON(w, http.StatusOK, st)
 }

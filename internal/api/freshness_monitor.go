@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	staleAfter    = 7 * 24 * time.Hour
 	freshCheckGap = 6 * time.Hour
 	realertGap    = 24 * time.Hour
 )
@@ -25,8 +24,12 @@ func (s *Server) runFreshnessMonitor(ctx context.Context) {
 	var lastAlert time.Time
 
 	for {
+		staleAfter := time.Duration(s.notify.StaleDays()) * 24 * time.Hour
 		sig, err := s.clam.Signatures(ctx)
-		if err == nil && sig.AgeSeconds >= 0 && time.Duration(sig.AgeSeconds)*time.Second > staleAfter {
+		switch {
+		case err != nil:
+			// A transient probe failure must not reset the re-alert window.
+		case sig.AgeSeconds >= 0 && time.Duration(sig.AgeSeconds)*time.Second > staleAfter:
 			if time.Since(lastAlert) > realertGap {
 				lastAlert = time.Now()
 				days := sig.AgeSeconds / 86400
@@ -37,8 +40,8 @@ func (s *Server) runFreshnessMonitor(ctx context.Context) {
 				s.bus.Publish(sse.Event{Type: "event", Data: map[string]any{"kind": "signatures-stale", "severity": "warning", "message": msg}})
 				s.notify.Dispatch("signatures-stale", msg)
 			}
-		} else {
-			lastAlert = time.Time{}
+		default:
+			lastAlert = time.Time{} // databases are fresh again
 		}
 
 		if !sleepCtx(ctx, freshCheckGap) {

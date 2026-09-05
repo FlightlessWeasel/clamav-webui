@@ -58,11 +58,29 @@ func (m *Manager) OnAccessStatus(ctx context.Context) (OnAccessStatus, error) {
 	return st, nil
 }
 
-// ApplyOnAccess writes the on-access keys into clamd.conf, restarts the daemon,
-// and enables or disables the clamav-clamonacc service to match cfg.Enabled.
+// ApplyOnAccess enables or disables real-time scanning. Enabling: write the
+// on-access keys into clamd.conf, (re)start + enable clamav-daemon, then enable
+// + start clamav-clamonacc. Disabling only stops clamonacc; clamd.conf is left
+// untouched.
 func (m *Manager) ApplyOnAccess(ctx context.Context, cfg OnAccessConfig) error {
 	if _, ok := m.run.LookPath("clamonacc"); !ok {
 		return ErrNotInstalled
+	}
+
+	if !cfg.Enabled {
+		_ = m.ServiceAction(ctx, "clamav-clamonacc", "stop")
+		if err := m.ServiceAction(ctx, "clamav-clamonacc", "disable"); err != nil {
+			return fmt.Errorf("disable clamav-clamonacc: %w", err)
+		}
+		return nil
+	}
+
+	daemon, err := m.Service(ctx, "clamav-daemon")
+	if err != nil {
+		return fmt.Errorf("check clamav-daemon: %w", err)
+	}
+	if !daemon.Installed {
+		return fmt.Errorf("%w: clamav-daemon unit not found", ErrNotInstalled)
 	}
 
 	unames := cfg.ExcludeUnames
@@ -83,23 +101,19 @@ func (m *Manager) ApplyOnAccess(ctx context.Context, cfg OnAccessConfig) error {
 		return err
 	}
 
-	if cfg.Enabled {
-		if err := m.ServiceAction(ctx, "clamav-daemon", "restart"); err != nil {
-			return fmt.Errorf("restart clamav-daemon: %w", err)
-		}
-		if err := m.ServiceAction(ctx, "clamav-clamonacc", "enable"); err != nil {
-			return fmt.Errorf("enable clamav-clamonacc: %w", err)
-		}
-		if err := m.ServiceAction(ctx, "clamav-clamonacc", "restart"); err != nil {
-			return fmt.Errorf("start clamav-clamonacc: %w", err)
-		}
-		return nil
+	_ = m.ServiceAction(ctx, "clamav-daemon", "enable")
+	if err := m.ServiceAction(ctx, "clamav-daemon", "restart"); err != nil {
+		// clamd.conf is already changed; roll it back and try once more so we
+		// don't leave the daemon down.
+		_ = m.RestoreConfBackup("clamd")
+		_ = m.ServiceAction(ctx, "clamav-daemon", "restart")
+		return fmt.Errorf("restart clamav-daemon (rolled back clamd.conf): %w", err)
 	}
-
-	// Disabling: stop + disable clamonacc; leave clamd.conf keys in place.
-	_ = m.ServiceAction(ctx, "clamav-clamonacc", "stop")
-	if err := m.ServiceAction(ctx, "clamav-clamonacc", "disable"); err != nil {
-		return fmt.Errorf("disable clamav-clamonacc: %w", err)
+	if err := m.ServiceAction(ctx, "clamav-clamonacc", "enable"); err != nil {
+		return fmt.Errorf("enable clamav-clamonacc: %w", err)
+	}
+	if err := m.ServiceAction(ctx, "clamav-clamonacc", "restart"); err != nil {
+		return fmt.Errorf("start clamav-clamonacc: %w", err)
 	}
 	return nil
 }

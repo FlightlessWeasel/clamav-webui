@@ -21,6 +21,8 @@ func (d *DB) AddEvent(kind, severity, message string, meta any) (int64, error) {
 	if meta != nil {
 		if b, err := json.Marshal(meta); err == nil {
 			mj = b
+		} else {
+			return 0, fmt.Errorf("marshal event meta: %w", err)
 		}
 	}
 	res, err := d.Exec(`INSERT INTO events (kind, severity, message, meta_json) VALUES (?, ?, ?, ?)`,

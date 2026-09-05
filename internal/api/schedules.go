@@ -168,7 +168,7 @@ func (s *Server) runScheduledScan(scheduleID int64) {
 		return
 	}
 	_, err = s.jobs.Enqueue("scan", &scanID, func(ctx context.Context, jc *worker.JobContext) error {
-		return s.runScan(ctx, jc, scanID, sch.Paths, opts)
+		return s.runScan(ctx, jc, scanID, "scheduled", sch.Paths, opts)
 	})
 	if err != nil {
 		_ = s.db.FinishScan(scanID, "error", 0, 0, err.Error())

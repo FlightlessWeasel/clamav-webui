@@ -14,7 +14,7 @@ function draftFromView(v: ConfView): Draft {
 export default function ConfEditor({ which }: { which: "clamd" | "freshclam" }) {
   const { data, error, loading, reload } = useAsync(() => getConfig(which), [which]);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [restart, setRestart] = useState(true);
+  const [restart, setRestart] = useState(false); // opt-in: "offer to restart"
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<string>();
   const [saved, setSaved] = useState<string>();

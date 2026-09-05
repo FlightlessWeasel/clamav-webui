@@ -57,10 +57,17 @@ func (s *stubRunner) WriteFile(name string, data []byte, _ os.FileMode) error {
 
 func (s *stubRunner) Rename(oldPath, newPath string) error {
 	ob, nb := path.Base(oldPath), path.Base(newPath)
-	if c, ok := s.files[ob]; ok {
-		s.files[nb] = c
-		delete(s.files, ob)
+	c, ok := s.files[ob]
+	if !ok {
+		return os.ErrNotExist
 	}
+	s.files[nb] = c
+	delete(s.files, ob)
+	return nil
+}
+
+func (s *stubRunner) Remove(name string) error {
+	delete(s.files, path.Base(name))
 	return nil
 }
 

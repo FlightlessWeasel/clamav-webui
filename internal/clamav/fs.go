@@ -10,6 +10,7 @@ type FS interface {
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	Rename(oldpath, newpath string) error
+	Remove(name string) error
 }
 
 type osFS struct{}
@@ -20,3 +21,4 @@ func (osFS) WriteFile(name string, data []byte, perm os.FileMode) error {
 	return os.WriteFile(name, data, perm)
 }
 func (osFS) Rename(oldpath, newpath string) error { return os.Rename(oldpath, newpath) }
+func (osFS) Remove(name string) error             { return os.Remove(name) }

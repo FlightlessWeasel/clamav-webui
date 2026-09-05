@@ -37,6 +37,8 @@ func TestOnAccessStatusReadsConf(t *testing.T) {
 
 func TestApplyOnAccessEnable(t *testing.T) {
 	m, f, fs := onaccMgr(t, "LogVerbose no\n")
+	f.on(showKey("clamav-daemon"), fakeResp{stdout: "Id=clamav-daemon.service\nLoadState=loaded\nActiveState=active\nSubState=running\n"})
+	f.on("systemctl enable clamav-daemon", fakeResp{})
 	f.on("systemctl restart clamav-daemon", fakeResp{})
 	f.on("systemctl enable clamav-clamonacc", fakeResp{})
 	f.on("systemctl restart clamav-clamonacc", fakeResp{})

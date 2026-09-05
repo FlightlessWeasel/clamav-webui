@@ -86,10 +86,19 @@ func (s *SimRunner) Rename(oldpath, newpath string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ob, nb := filepath.Base(oldpath), filepath.Base(newpath)
-	if c, ok := s.files[ob]; ok {
-		s.files[nb] = c
-		delete(s.files, ob)
+	c, ok := s.files[ob]
+	if !ok {
+		return os.ErrNotExist
 	}
+	s.files[nb] = c
+	delete(s.files, ob)
+	return nil
+}
+
+func (s *SimRunner) Remove(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.files, filepath.Base(name))
 	return nil
 }
 

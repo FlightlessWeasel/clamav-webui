@@ -42,7 +42,7 @@ describe("ConfEditor", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(putConfig).toHaveBeenCalledWith("clamd", { MaxThreads: ["4"] }, true),
+      expect(putConfig).toHaveBeenCalledWith("clamd", { MaxThreads: ["4"] }, false),
     );
   });
 

@@ -43,7 +43,7 @@ func (s *Server) handleCreateScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jobID, err := s.jobs.Enqueue("scan", &scanID, func(ctx context.Context, jc *worker.JobContext) error {
-		return s.runScan(ctx, jc, scanID, paths, req.Options)
+		return s.runScan(ctx, jc, scanID, "manual", paths, req.Options)
 	})
 	if err != nil {
 		_ = s.db.FinishScan(scanID, "error", 0, 0, err.Error())
@@ -54,7 +54,7 @@ func (s *Server) handleCreateScan(w http.ResponseWriter, r *http.Request) {
 }
 
 // runScan is the worker body for a scan job.
-func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int64, paths []string, opts clamav.ScanOptions) error {
+func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int64, source string, paths []string, opts clamav.ScanOptions) error {
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Hour)
 	defer cancel()
 
@@ -103,8 +103,12 @@ func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int6
 		}
 		_ = s.db.FinishScan(scanID, status, res.Scanned, infected, scanErr.Error())
 		if status == "error" {
+			label := "Scan"
+			if source == "scheduled" {
+				label = "Scheduled scan"
+			}
 			s.recordScanOutcome(scanID, "scan-failure", "warning",
-				"Scan #"+strconv.FormatInt(scanID, 10)+" failed: "+scanErr.Error())
+				label+" #"+strconv.FormatInt(scanID, 10)+" failed: "+scanErr.Error())
 		}
 		return scanErr
 	}
