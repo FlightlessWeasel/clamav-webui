@@ -50,6 +50,20 @@ func (s *stubRunner) ReadFile(name string) ([]byte, error) {
 	return nil, os.ErrNotExist
 }
 
+func (s *stubRunner) WriteFile(name string, data []byte, _ os.FileMode) error {
+	s.files[path.Base(name)] = string(data)
+	return nil
+}
+
+func (s *stubRunner) Rename(oldPath, newPath string) error {
+	ob, nb := path.Base(oldPath), path.Base(newPath)
+	if c, ok := s.files[ob]; ok {
+		s.files[nb] = c
+		delete(s.files, ob)
+	}
+	return nil
+}
+
 type stubInfo struct{ name string }
 
 func (i stubInfo) Name() string       { return i.name }

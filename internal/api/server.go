@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/FlightlessWeasel/clamav-webui/internal/clamav"
 	"github.com/FlightlessWeasel/clamav-webui/internal/config"
 	"github.com/FlightlessWeasel/clamav-webui/internal/db"
+	"github.com/FlightlessWeasel/clamav-webui/internal/notify"
 	"github.com/FlightlessWeasel/clamav-webui/internal/quarantine"
 	"github.com/FlightlessWeasel/clamav-webui/internal/scheduler"
 	"github.com/FlightlessWeasel/clamav-webui/internal/sse"
@@ -34,6 +36,8 @@ type Server struct {
 	jobs     *worker.Manager
 	qstore   *quarantine.Store
 	sched    *scheduler.Scheduler
+	notify   *notify.Dispatcher
+	bgCancel context.CancelFunc
 	// sessionSecret is persisted at first start. Sessions are currently
 	// in-memory only; the secret is reserved for signing persistent tokens.
 	sessionSecret string
@@ -58,6 +62,16 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	settings, err := database.GetSettings()
+	if err != nil {
+		return nil, err
+	}
+	var ncfg notify.Config
+	if settings.NotifyConfigJSON != "" {
+		_ = json.Unmarshal([]byte(settings.NotifyConfigJSON), &ncfg)
+	}
+
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:           cfg,
 		db:            database,
@@ -68,12 +82,20 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		bus:           bus,
 		jobs:          worker.New(database, bus, 2),
 		qstore:        qstore,
+		notify:        notify.New(ncfg),
+		bgCancel:      bgCancel,
 		sessionSecret: secret,
 	}
 	s.sched = scheduler.New(database, s.runScheduledScan)
 	if err := s.sched.Start(); err != nil {
 		slog.Error("scheduler start", "err", err)
 	}
+
+	go s.runFreshnessMonitor(bgCtx)
+	if os.Getenv("CLAMWEB_DEV_SIM") != "1" {
+		go s.runOnAccessTailer(bgCtx)
+	}
+
 	s.mux = s.routes()
 	return s, nil
 }
@@ -81,8 +103,9 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 // Handler is the root http.Handler.
 func (s *Server) Handler() http.Handler { return s.mux }
 
-// Close stops the background worker and the scheduler.
+// Close stops the background worker, scheduler and monitor goroutines.
 func (s *Server) Close() {
+	s.bgCancel()
 	s.sched.Stop()
 	s.jobs.Shutdown()
 }
@@ -138,6 +161,19 @@ func (s *Server) routes() http.Handler {
 			r.Put("/schedules/{id}", s.handleUpdateSchedule)
 			r.Delete("/schedules/{id}", s.handleDeleteSchedule)
 			r.Post("/schedules/{id}/run", s.handleRunSchedule)
+
+			r.Get("/config/{which}", s.handleGetConfig)
+			r.Put("/config/{which}", s.handlePutConfig)
+
+			r.Get("/onaccess", s.handleGetOnAccess)
+			r.Put("/onaccess", s.handlePutOnAccess)
+
+			r.Get("/activity", s.handleActivity)
+			r.Post("/password", s.handleChangePassword)
+
+			r.Get("/notifications", s.handleGetNotifications)
+			r.Put("/notifications", s.handlePutNotifications)
+			r.Post("/notifications/test", s.handleTestNotification)
 
 			r.Get("/browse", s.handleBrowse)
 

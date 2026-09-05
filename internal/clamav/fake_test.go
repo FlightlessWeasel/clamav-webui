@@ -40,6 +40,20 @@ func (f *fakeFS) ReadFile(name string) ([]byte, error) {
 	return nil, os.ErrNotExist
 }
 
+func (f *fakeFS) WriteFile(name string, data []byte, _ os.FileMode) error {
+	f.files[filepath.Base(name)] = fakeFile{content: append([]byte(nil), data...), mod: time.Now()}
+	return nil
+}
+
+func (f *fakeFS) Rename(oldpath, newpath string) error {
+	ob, nb := filepath.Base(oldpath), filepath.Base(newpath)
+	if ff, ok := f.files[ob]; ok {
+		f.files[nb] = ff
+		delete(f.files, ob)
+	}
+	return nil
+}
+
 type fakeInfo struct {
 	name string
 	size int64

@@ -3,6 +3,7 @@ package clamav
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -144,6 +145,30 @@ func (m *Manager) ServiceLogs(ctx context.Context, unit string, lines int) (stri
 		return "", fmt.Errorf("journalctl -u %s: %w", unit, err)
 	}
 	return string(res.Stdout), nil
+}
+
+// StreamJournal follows a managed unit's journal (journalctl -f), invoking
+// onLine for each new line until ctx is canceled or journalctl exits.
+func (m *Manager) StreamJournal(ctx context.Context, unit string, onLine func(string)) error {
+	if !isManaged(unit) {
+		return fmt.Errorf("%w: %s", ErrUnknownUnit, unit)
+	}
+	return m.run.Stream(ctx, Cmd{
+		Name: "journalctl",
+		Args: []string{"-u", unit, "-f", "-n", "0", "-o", "cat"},
+	}, onLine)
+}
+
+var onAccessFoundRE = regexp.MustCompile(`(?:ScanOnAccess:\s*)?(/\S[^:]*): (\S.*?) FOUND\s*$`)
+
+// ParseOnAccessFound extracts (path, signature) from a clamd on-access FOUND
+// journal line. ok is false for any other line.
+func ParseOnAccessFound(line string) (path, signature string, ok bool) {
+	m := onAccessFoundRE.FindStringSubmatch(strings.TrimSpace(line))
+	if m == nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(m[1]), strings.TrimSpace(m[2]), true
 }
 
 // parseKV parses "Key=Value" lines into a map.

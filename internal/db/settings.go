@@ -42,6 +42,12 @@ func (d *DB) SetAdminPassword(hash string) error {
 	return nil
 }
 
+// SetNotifyConfig stores the notification configuration JSON.
+func (d *DB) SetNotifyConfig(jsonStr string) error {
+	_, err := d.Exec(`UPDATE settings SET notify_config_json = ?, updated_at = datetime('now') WHERE id = 1`, jsonStr)
+	return err
+}
+
 // EnsureSessionSecret returns the persisted session secret, generating and
 // storing one on first call.
 func (d *DB) EnsureSessionSecret() (string, error) {

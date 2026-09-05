@@ -102,11 +102,28 @@ func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int6
 			status = "canceled"
 		}
 		_ = s.db.FinishScan(scanID, status, res.Scanned, infected, scanErr.Error())
+		if status == "error" {
+			s.recordScanOutcome(scanID, "scan-failure", "warning",
+				"Scan #"+strconv.FormatInt(scanID, 10)+" failed: "+scanErr.Error())
+		}
 		return scanErr
 	}
 
 	_ = s.db.FinishScan(scanID, "done", res.Scanned, infected, "")
+	if infected > 0 {
+		s.recordScanOutcome(scanID, "scan-detection", "critical",
+			"Scan #"+strconv.FormatInt(scanID, 10)+" found "+strconv.Itoa(infected)+" infected file(s).")
+	}
 	return nil
+}
+
+// recordScanOutcome adds an event, publishes it, and fires a notification.
+func (s *Server) recordScanOutcome(scanID int64, kind, severity, msg string) {
+	if _, err := s.db.AddEvent(kind, severity, msg, map[string]any{"scan_id": scanID}); err != nil {
+		slog.Error("scan: add event", "err", err)
+	}
+	s.bus.Publish(sse.Event{Type: "event", Data: map[string]any{"kind": kind, "severity": severity, "message": msg}})
+	s.notify.Dispatch(kind, msg)
 }
 
 func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {

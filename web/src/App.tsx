@@ -12,7 +12,9 @@ import Scans from "./pages/Scans";
 import ScanDetail from "./pages/ScanDetail";
 import Quarantine from "./pages/Quarantine";
 import Schedules from "./pages/Schedules";
-import Stub from "./pages/Stub";
+import Protection from "./pages/Protection";
+import Activity from "./pages/Activity";
+import Settings from "./pages/Settings";
 
 function Gate() {
   const { status, loading } = useAuth();
@@ -38,9 +40,9 @@ function Gate() {
         <Route path="schedules" element={<Schedules />} />
         <Route path="signatures" element={<Signatures />} />
         <Route path="quarantine" element={<Quarantine />} />
-        <Route path="protection" element={<Stub title="Protection" />} />
-        <Route path="activity" element={<Stub title="Activity" />} />
-        <Route path="settings" element={<Stub title="Settings" />} />
+        <Route path="protection" element={<Protection />} />
+        <Route path="activity" element={<Activity />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

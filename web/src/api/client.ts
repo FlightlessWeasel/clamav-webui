@@ -186,6 +186,57 @@ export const updateSchedule = (id: number, body: ScheduleInput) =>
 export const deleteSchedule = (id: number) => api<void>(`/schedules/${id}`, { method: "DELETE" });
 export const runSchedule = (id: number) => api<{ result: string }>(`/schedules/${id}/run`, { method: "POST" });
 
+export type ConfEntry = {
+  name: string;
+  kind: "string" | "bool" | "int" | "path" | "size";
+  repeatable: boolean;
+  help: string;
+  values: string[];
+};
+export type ConfView = { which: string; path: string; unit: string; entries: ConfEntry[] };
+
+export const getConfig = (which: "clamd" | "freshclam") => api<ConfView>(`/config/${which}`);
+export const putConfig = (which: "clamd" | "freshclam", updates: Record<string, string[]>, restart: boolean) =>
+  api<{ config: ConfView; restarted: boolean }>(`/config/${which}`, { method: "PUT", body: { updates, restart } });
+
+export type OnAccessStatus = {
+  supported: boolean;
+  daemon_active: boolean;
+  clamonacc: ServiceState;
+  enabled: boolean;
+  watch_paths: string[];
+  exclude_paths: string[];
+  exclude_unames: string[];
+  prevention: boolean;
+};
+export type OnAccessConfig = {
+  enabled: boolean;
+  paths: string[];
+  exclude_paths?: string[];
+  exclude_unames?: string[];
+  prevention: boolean;
+};
+export const getOnAccess = () => api<OnAccessStatus>("/onaccess");
+export const putOnAccess = (cfg: OnAccessConfig) => api<OnAccessStatus>("/onaccess", { method: "PUT", body: cfg });
+
+export type ActivityEvent = { id: number; kind: string; severity: string; message: string; ts: string };
+export type Activity = { jobs: Job[]; events: ActivityEvent[] };
+export const getActivity = () => api<Activity>("/activity");
+
+export const changePassword = (current: string, next: string) =>
+  api<void>("/password", { method: "POST", body: { current, new: next } });
+
+export type NotifyConfig = {
+  enabled: boolean;
+  events: string[];
+  smtp?: { host: string; port: number; username?: string; password?: string; from: string; to: string; starttls?: boolean };
+  webhook?: { url: string };
+  ntfy?: { base_url?: string; topic: string; token?: string };
+};
+export const getNotifications = () => api<NotifyConfig>("/notifications");
+export const putNotifications = (cfg: NotifyConfig) => api<NotifyConfig>("/notifications", { method: "PUT", body: cfg });
+export const testNotification = () => api<{ result: string }>("/notifications/test", { method: "POST" });
+
 export const getQuarantine = () => api<{ items: QuarantineItem[] }>("/quarantine");
 export const quarantineFile = (body: { path: string; signature: string; scan_id?: number; finding_id?: number }) =>
   api<QuarantineItem>("/quarantine", { method: "POST", body });

@@ -22,6 +22,7 @@ type SimRunner struct {
 	dbDate    string
 	dbTime    time.Time
 	units     map[string]*simUnit
+	files     map[string]string // basename -> content, mutable via WriteFile
 }
 
 type simUnit struct {
@@ -41,6 +42,10 @@ func NewSimRunner() *SimRunner {
 			"clamav-daemon":    {},
 			"clamav-freshclam": {},
 			"clamav-clamonacc": {},
+		},
+		files: map[string]string{
+			"freshclam.conf": "DatabaseMirror database.clamav.net\nChecks 24\n",
+			"clamd.conf":     "LogVerbose false\nLogTime yes\nMaxThreads 12\nMaxFileSize 100M\n",
 		},
 	}
 }
@@ -62,14 +67,30 @@ func (s *SimRunner) Stat(name string) (os.FileInfo, error) {
 }
 
 func (s *SimRunner) ReadFile(name string) ([]byte, error) {
-	base := filepath.Base(name)
-	switch base {
-	case "freshclam.conf":
-		return []byte("DatabaseMirror database.clamav.net\nChecks 24\n"), nil
-	case "clamd.conf":
-		return []byte("LogVerbose false\nMaxThreads 12\n"), nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.files[filepath.Base(name)]; ok {
+		return []byte(c), nil
 	}
 	return nil, os.ErrNotExist
+}
+
+func (s *SimRunner) WriteFile(name string, data []byte, _ os.FileMode) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.files[filepath.Base(name)] = string(data)
+	return nil
+}
+
+func (s *SimRunner) Rename(oldpath, newpath string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ob, nb := filepath.Base(oldpath), filepath.Base(newpath)
+	if c, ok := s.files[ob]; ok {
+		s.files[nb] = c
+		delete(s.files, ob)
+	}
+	return nil
 }
 
 type simFileInfo struct {

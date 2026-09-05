@@ -36,7 +36,7 @@ func (s *Server) handleQuarantineFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, jsonErrMsg(err))
 		return
 	}
-	if err := s.checkQuarantinePath(req.Path); err != nil {
+	if err := s.checkTargetPath(req.Path); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -127,15 +127,16 @@ func (s *Server) handleDeleteQuarantine(w http.ResponseWriter, r *http.Request) 
 	s.writeQuarantineItem(w, item.ID)
 }
 
-// checkQuarantinePath refuses relative paths, anything outside the browse root,
-// and the app's own state directory (so the SQLite DB can't be quarantined).
-func (s *Server) checkQuarantinePath(p string) error {
+// checkTargetPath refuses relative paths, anything outside the browse root, and
+// the app's own state directory. It guards both quarantine targets and
+// on-access watch paths.
+func (s *Server) checkTargetPath(p string) error {
 	if !filepath.IsAbs(p) {
 		return errors.New("path must be absolute")
 	}
 	clean := filepath.Clean(p)
 	if withinRoot(clean, filepath.Clean(s.cfg.ConfigDir)) {
-		return errors.New("cannot quarantine a file inside the application's data directory")
+		return errors.New("path is inside the application's data directory")
 	}
 	if !withinRoot(clean, filepath.Clean(s.cfg.BrowseRoot)) {
 		return errors.New("path is outside the allowed root")
