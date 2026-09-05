@@ -40,11 +40,16 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		signatures = sig
 	}
 
+	var lastScan any
+	if scans, err := s.db.ListScans(1); err == nil && len(scans) == 1 {
+		lastScan = scans[0]
+	}
+
 	writeJSON(w, http.StatusOK, dashboardResponse{
 		Install:    install,
 		Services:   services,
 		Signatures: signatures,
-		Quarantine: 0,   // populated once the quarantine step lands
-		LastScan:   nil, // populated once scanning lands
+		Quarantine: 0, // populated once the quarantine step lands
+		LastScan:   lastScan,
 	})
 }

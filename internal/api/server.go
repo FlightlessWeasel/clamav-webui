@@ -106,6 +106,14 @@ func (s *Server) routes() http.Handler {
 			r.Get("/signatures", s.handleSignatures)
 			r.Post("/signatures/update", s.handleSignaturesUpdate)
 
+			r.Get("/scans", s.handleListScans)
+			r.Post("/scans", s.handleCreateScan)
+			r.Get("/scans/{id}", s.handleGetScan)
+			r.Get("/scans/{id}/findings", s.handleScanFindings)
+			r.Post("/scans/{id}/cancel", s.handleCancelScan)
+
+			r.Get("/browse", s.handleBrowse)
+
 			r.Get("/jobs/{id}", s.handleGetJob)
 		})
 	})

@@ -1,0 +1,11 @@
+/srv/data/a.txt: OK
+/srv/data/b.bin: OK
+
+----------- SCAN SUMMARY -----------
+Known viruses: 8683215
+Engine version: 1.0.3
+Scanned directories: 1
+Scanned files: 2
+Infected files: 0
+Data scanned: 1.20 MB
+Time: 2.001 sec (0 m 2 s)

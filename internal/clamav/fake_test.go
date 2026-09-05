@@ -64,6 +64,7 @@ type fakeResp struct {
 	stdout string
 	stderr string
 	err    error
+	exit   int      // non-zero => Stream returns *ExitError{Code: exit}
 	lines  []string // for Stream
 }
 
@@ -118,6 +119,9 @@ func (f *fakeRunner) Stream(_ context.Context, c Cmd, onLine func(string)) error
 		for _, ln := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
 			onLine(ln)
 		}
+	}
+	if r.exit != 0 {
+		return &ExitError{Code: r.exit}
 	}
 	return r.err
 }

@@ -7,6 +7,9 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Install from "./pages/Install";
 import Signatures from "./pages/Signatures";
+import Scan from "./pages/Scan";
+import Scans from "./pages/Scans";
+import ScanDetail from "./pages/ScanDetail";
 import Stub from "./pages/Stub";
 
 function Gate() {
@@ -27,8 +30,9 @@ function Gate() {
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="install" element={<Install />} />
-        <Route path="scan" element={<Stub title="Scan" />} />
-        <Route path="scans" element={<Stub title="Scan history" />} />
+        <Route path="scan" element={<Scan />} />
+        <Route path="scans" element={<Scans />} />
+        <Route path="scans/:id" element={<ScanDetail />} />
         <Route path="schedules" element={<Stub title="Schedules" />} />
         <Route path="signatures" element={<Signatures />} />
         <Route path="quarantine" element={<Stub title="Quarantine" />} />

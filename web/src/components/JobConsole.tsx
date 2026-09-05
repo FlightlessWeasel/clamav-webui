@@ -51,7 +51,8 @@ export default function JobConsole({ jobId, onDone }: Props) {
   );
 
   useEffect(() => {
-    preRef.current?.scrollTo({ top: preRef.current.scrollHeight });
+    const el = preRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [lines]);
 
   return (

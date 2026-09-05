@@ -21,6 +21,7 @@ import (
 type stubRunner struct {
 	out   map[string]string
 	err   map[string]error
+	exit  map[string]int
 	have  map[string]bool
 	lines map[string][]string
 	files map[string]string // basename -> content ("" ok); presence = Stat succeeds
@@ -28,8 +29,8 @@ type stubRunner struct {
 
 func newStub() *stubRunner {
 	return &stubRunner{
-		out: map[string]string{}, err: map[string]error{}, have: map[string]bool{},
-		lines: map[string][]string{}, files: map[string]string{},
+		out: map[string]string{}, err: map[string]error{}, exit: map[string]int{},
+		have: map[string]bool{}, lines: map[string][]string{}, files: map[string]string{},
 	}
 }
 
@@ -66,6 +67,14 @@ func (s *stubRunner) Stream(_ context.Context, c clamav.Cmd, onLine func(string)
 	k := ckey(c)
 	for _, l := range s.lines[k] {
 		onLine(l)
+	}
+	if s.out[k] != "" {
+		for _, l := range strings.Split(strings.TrimRight(s.out[k], "\n"), "\n") {
+			onLine(l)
+		}
+	}
+	if n := s.exit[k]; n != 0 {
+		return &clamav.ExitError{Code: n}
 	}
 	return s.err[k]
 }

@@ -1,0 +1,16 @@
+/tmp/scan/clean.txt: OK
+/tmp/scan/eicar.com: Win.Test.EICAR_HDB-1 FOUND
+/tmp/scan/sub/document.pdf: OK
+/tmp/scan/sub/nested-eicar.txt: Win.Test.EICAR_HDB-1 FOUND
+
+----------- SCAN SUMMARY -----------
+Known viruses: 8683215
+Engine version: 1.0.3
+Scanned directories: 2
+Scanned files: 4
+Infected files: 2
+Data scanned: 0.01 MB
+Data read: 0.00 MB (ratio 0.00:1)
+Time: 8.245 sec (0 m 8 s)
+Start Date: 2024:09:20 08:15:11
+End Date:   2024:09:20 08:15:19

@@ -61,6 +61,21 @@ func (d *DB) FailStaleJobs(reason string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// RunningJobForRef returns the id of a running job of the given kind linked to
+// refID, if one exists.
+func (d *DB) RunningJobForRef(kind string, refID int64) (int64, bool, error) {
+	var id int64
+	err := d.QueryRow(`SELECT id FROM jobs WHERE kind=? AND ref_id=? AND status='running' ORDER BY id DESC LIMIT 1`,
+		kind, refID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return id, true, nil
+}
+
 // GetJob returns one job by id.
 func (d *DB) GetJob(id int64) (Job, error) {
 	return scanJob(d.QueryRow(`

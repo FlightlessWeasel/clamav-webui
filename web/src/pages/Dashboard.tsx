@@ -90,8 +90,32 @@ export default function Dashboard() {
             <p className="text-sm text-zinc-500">unavailable</p>
           )}
         </Card>
-        <Card title="Last scan">
-          <p className="text-sm text-zinc-500">No scans yet.</p>
+        <Card
+          title="Last scan"
+          actions={
+            <Link className="text-xs text-sky-600 hover:underline" to="/scans">
+              History
+            </Link>
+          }
+        >
+          {data.last_scan ? (
+            <>
+              <p className="text-sm">
+                <span className={data.last_scan.infected ? "font-semibold text-red-600" : ""}>
+                  {data.last_scan.infected} infected
+                </span>{" "}
+                / {data.last_scan.scanned} scanned
+              </p>
+              <p className="text-xs text-zinc-500">
+                {data.last_scan.status}
+                {data.last_scan.finished_at
+                  ? ` · ${new Date(data.last_scan.finished_at + "Z").toLocaleString()}`
+                  : ""}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-500">No scans yet.</p>
+          )}
         </Card>
         <Card title="Quarantine">
           <p className="text-2xl font-semibold">{data.quarantine_held}</p>

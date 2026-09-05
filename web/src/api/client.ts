@@ -90,13 +90,60 @@ export type ServiceState = {
   since_unix: number;
 };
 
+export type ScanOptions = {
+  recursive?: boolean;
+  follow_symlinks?: boolean;
+  max_file_size_mb?: number;
+  max_scan_size_mb?: number;
+  force_clamscan?: boolean;
+};
+
+export type Scan = {
+  id: number;
+  source: string;
+  status: "queued" | "running" | "done" | "error" | "canceled";
+  paths: string[];
+  engine: string;
+  db_version: string;
+  scanned: number;
+  infected: number;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+  created_at: string;
+};
+
+export type ScanFinding = {
+  id: number;
+  scan_id: number;
+  path: string;
+  signature: string;
+  action: "none" | "quarantined" | "failed";
+  created_at: string;
+};
+
 export type Dashboard = {
   install: Install;
   services: ServiceState[];
   signatures: Signatures | null;
   quarantine_held: number;
-  last_scan: unknown;
+  last_scan: Scan | null;
 };
+
+export type BrowseResult = {
+  path: string;
+  parent: string;
+  root: string;
+  entries: { name: string; path: string; is_dir: boolean }[];
+};
+
+export const createScan = (paths: string[], options: ScanOptions) =>
+  api<{ scan_id: number; job_id: number }>("/scans", { method: "POST", body: { paths, options } });
+export const getScans = () => api<{ scans: Scan[] }>("/scans");
+export const getScan = (id: number) => api<Scan>(`/scans/${id}`);
+export const getScanFindings = (id: number) => api<{ findings: ScanFinding[] }>(`/scans/${id}/findings`);
+export const cancelScan = (id: number) => api<{ result: string }>(`/scans/${id}/cancel`, { method: "POST" });
+export const browse = (path: string) => api<BrowseResult>(`/browse?path=${encodeURIComponent(path)}`);
 
 export type Job = {
   id: number;

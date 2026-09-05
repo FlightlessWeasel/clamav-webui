@@ -116,6 +116,32 @@ func TestStaleJobsFailedOnStart(t *testing.T) {
 	}
 }
 
+func TestCancelStopsRunningJob(t *testing.T) {
+	m, d := newTestManager(t)
+
+	started := make(chan struct{})
+	id, err := m.Enqueue("test", nil, func(ctx context.Context, _ *JobContext) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+
+	if !m.Cancel(id) {
+		t.Fatal("Cancel returned false for a running job")
+	}
+	j := waitJob(t, d, id, "error")
+	if j.Error == "" {
+		t.Errorf("canceled job should record an error, got %+v", j)
+	}
+	if m.Cancel(id) {
+		t.Error("Cancel should return false once the job has finished")
+	}
+}
+
 func TestEventsPublished(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

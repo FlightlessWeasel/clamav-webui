@@ -1,0 +1,6 @@
+/tmp/scan/eicar.com: Win.Test.EICAR_HDB-1(a1b2c3d4:5678) FOUND
+/tmp/scan: Some.Sig.Name FOUND
+
+----------- SCAN SUMMARY -----------
+Infected files: 2
+Time: 0.512 sec (0 m 0 s)

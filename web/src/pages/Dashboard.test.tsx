@@ -47,7 +47,18 @@ const base: DashboardData = {
     has_sigtool: true,
   },
   quarantine_held: 2,
-  last_scan: null,
+  last_scan: {
+    id: 7,
+    source: "manual",
+    status: "done",
+    paths: ["/srv"],
+    engine: "1.0.3",
+    db_version: "27000",
+    scanned: 1200,
+    infected: 0,
+    created_at: "2024-09-20 08:00:00",
+    finished_at: "2024-09-20 08:05:00",
+  },
 };
 
 beforeEach(() => getDashboard.mockReset());

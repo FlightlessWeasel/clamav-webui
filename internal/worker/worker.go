@@ -69,6 +69,9 @@ type Manager struct {
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 	ctx    context.Context
+
+	mu      sync.Mutex
+	running map[int64]context.CancelFunc
 }
 
 // New starts n worker goroutines (n >= 1) and fails any jobs left running or
@@ -85,11 +88,12 @@ func New(database *db.DB, bus *sse.Bus, n int) *Manager {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		db:     database,
-		bus:    bus,
-		ch:     make(chan queued, queueDepth),
-		cancel: cancel,
-		ctx:    ctx,
+		db:      database,
+		bus:     bus,
+		ch:      make(chan queued, queueDepth),
+		cancel:  cancel,
+		ctx:     ctx,
+		running: make(map[int64]context.CancelFunc),
 	}
 	for i := 0; i < n; i++ {
 		m.wg.Add(1)
@@ -120,6 +124,18 @@ func (m *Manager) Enqueue(kind string, refID *int64, fn TaskFunc) (int64, error)
 	}
 }
 
+// Cancel stops a running job by id. It returns false if the job is not
+// currently running (already finished, or still queued).
+func (m *Manager) Cancel(id int64) bool {
+	m.mu.Lock()
+	cancel, ok := m.running[id]
+	m.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
+}
+
 // Shutdown cancels any running job and waits for the workers to exit, then
 // fails anything still queued.
 func (m *Manager) Shutdown() {
@@ -148,8 +164,19 @@ func (m *Manager) execute(q queued) {
 	}
 	m.publishJob(q.id, q.kind, "running", "")
 
+	jobCtx, jobCancel := context.WithCancel(m.ctx)
+	m.mu.Lock()
+	m.running[q.id] = jobCancel
+	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.running, q.id)
+		m.mu.Unlock()
+		jobCancel()
+	}()
+
 	jc := &JobContext{JobID: q.id, m: m}
-	err := safeRun(m.ctx, q.fn, jc)
+	err := safeRun(jobCtx, q.fn, jc)
 
 	status, errMsg := "done", ""
 	if err != nil {

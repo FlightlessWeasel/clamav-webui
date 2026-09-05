@@ -229,6 +229,39 @@ func (s *SimRunner) Stream(_ context.Context, c Cmd, onLine func(string)) error 
 		s.mu.Unlock()
 		return nil
 	}
+	if c.Name == "clamdscan" || c.Name == "clamscan" {
+		var targets []string
+		for _, a := range c.Args {
+			if !strings.HasPrefix(a, "-") {
+				targets = append(targets, a)
+			}
+		}
+		infected := 0
+		scanned := 0
+		for _, root := range targets {
+			for _, name := range []string{"clean-a.txt", "eicar.com", "docs/report.pdf", "downloads/eicar-test.txt"} {
+				p := root + "/" + name
+				scanned++
+				if strings.Contains(name, "eicar") {
+					infected++
+					onLine(p + ": Sim.Eicar.Test-Signature FOUND")
+				} else {
+					onLine(p + ": OK")
+				}
+				time.Sleep(180 * time.Millisecond)
+			}
+		}
+		onLine("")
+		onLine("----------- SCAN SUMMARY -----------")
+		onLine("Engine version: " + s.engine)
+		onLine(fmt.Sprintf("Scanned files: %d", scanned))
+		onLine(fmt.Sprintf("Infected files: %d", infected))
+		onLine("Time: 2.500 sec (0 m 2 s)")
+		if infected > 0 {
+			return &ExitError{Code: 1}
+		}
+		return nil
+	}
 	if c.Name == "freshclam" {
 		for _, l := range []string{
 			"ClamAV update process started at " + time.Now().Format(time.RFC1123),

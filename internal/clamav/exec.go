@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -19,6 +20,16 @@ import (
 // maxCapturedOutput bounds how much stdout/stderr Run keeps in memory. ClamAV
 // and apt output is small; anything larger is almost certainly a runaway.
 const maxCapturedOutput = 8 << 20 // 8 MiB
+
+// ExitError reports that a streamed command exited non-zero. Callers that care
+// about the specific code (clamscan uses 1 for "virus found") can errors.As it.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return "command exited with status " + strconv.Itoa(e.Code)
+}
 
 // Cmd describes one external command invocation.
 type Cmd struct {
@@ -110,6 +121,11 @@ func (execRunner) Stream(ctx context.Context, c Cmd, onLine func(string)) error 
 	pw.Close() // unblock the reader with EOF
 	wg.Wait()
 	pr.Close()
+
+	var ee *exec.ExitError
+	if errors.As(waitErr, &ee) {
+		return &ExitError{Code: ee.ExitCode()}
+	}
 	return waitErr
 }
 

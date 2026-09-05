@@ -27,6 +27,8 @@ type Config struct {
 	// ClamdConf and FreshclamConf are the ClamAV config files to manage.
 	ClamdConf     string `json:"clamd_conf"`
 	FreshclamConf string `json:"freshclam_conf"`
+	// BrowseRoot bounds the directory picker; requests outside it are refused.
+	BrowseRoot string `json:"browse_root"`
 }
 
 // Defaults returns a Config populated with the built-in defaults.
@@ -38,6 +40,7 @@ func Defaults() Config {
 		ClamAVDBDir:   "/var/lib/clamav",
 		ClamdConf:     "/etc/clamav/clamd.conf",
 		FreshclamConf: "/etc/clamav/freshclam.conf",
+		BrowseRoot:    "/",
 	}
 }
 
@@ -80,6 +83,7 @@ func applyEnv(cfg *Config) {
 		{"CLAMWEB_CLAMAV_DB_DIR", &cfg.ClamAVDBDir},
 		{"CLAMWEB_CLAMD_CONF", &cfg.ClamdConf},
 		{"CLAMWEB_FRESHCLAM_CONF", &cfg.FreshclamConf},
+		{"CLAMWEB_BROWSE_ROOT", &cfg.BrowseRoot},
 	} {
 		if v := os.Getenv(e.key); v != "" {
 			*e.dst = v
