@@ -11,6 +11,7 @@ import Scan from "./pages/Scan";
 import Scans from "./pages/Scans";
 import ScanDetail from "./pages/ScanDetail";
 import Quarantine from "./pages/Quarantine";
+import Schedules from "./pages/Schedules";
 import Stub from "./pages/Stub";
 
 function Gate() {
@@ -34,7 +35,7 @@ function Gate() {
         <Route path="scan" element={<Scan />} />
         <Route path="scans" element={<Scans />} />
         <Route path="scans/:id" element={<ScanDetail />} />
-        <Route path="schedules" element={<Stub title="Schedules" />} />
+        <Route path="schedules" element={<Schedules />} />
         <Route path="signatures" element={<Signatures />} />
         <Route path="quarantine" element={<Quarantine />} />
         <Route path="protection" element={<Stub title="Protection" />} />

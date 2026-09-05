@@ -158,6 +158,34 @@ export type QuarantineItem = {
   updated_at: string;
 };
 
+export type Schedule = {
+  id: number;
+  name: string;
+  cron_expr: string;
+  paths: string[];
+  options: ScanOptions;
+  enabled: boolean;
+  last_run_id?: number;
+  last_run_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScheduleInput = {
+  name: string;
+  cron_expr: string;
+  paths: string[];
+  options: ScanOptions;
+  enabled: boolean;
+};
+
+export const getSchedules = () => api<{ schedules: Schedule[] }>("/schedules");
+export const createSchedule = (body: ScheduleInput) => api<Schedule>("/schedules", { method: "POST", body });
+export const updateSchedule = (id: number, body: ScheduleInput) =>
+  api<Schedule>(`/schedules/${id}`, { method: "PUT", body });
+export const deleteSchedule = (id: number) => api<void>(`/schedules/${id}`, { method: "DELETE" });
+export const runSchedule = (id: number) => api<{ result: string }>(`/schedules/${id}/run`, { method: "POST" });
+
 export const getQuarantine = () => api<{ items: QuarantineItem[] }>("/quarantine");
 export const quarantineFile = (body: { path: string; signature: string; scan_id?: number; finding_id?: number }) =>
   api<QuarantineItem>("/quarantine", { method: "POST", body });

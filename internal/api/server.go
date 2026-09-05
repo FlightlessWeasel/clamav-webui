@@ -14,6 +14,7 @@ import (
 	"github.com/FlightlessWeasel/clamav-webui/internal/config"
 	"github.com/FlightlessWeasel/clamav-webui/internal/db"
 	"github.com/FlightlessWeasel/clamav-webui/internal/quarantine"
+	"github.com/FlightlessWeasel/clamav-webui/internal/scheduler"
 	"github.com/FlightlessWeasel/clamav-webui/internal/sse"
 	"github.com/FlightlessWeasel/clamav-webui/internal/webui"
 	"github.com/FlightlessWeasel/clamav-webui/internal/worker"
@@ -32,6 +33,7 @@ type Server struct {
 	bus      *sse.Bus
 	jobs     *worker.Manager
 	qstore   *quarantine.Store
+	sched    *scheduler.Scheduler
 	// sessionSecret is persisted at first start. Sessions are currently
 	// in-memory only; the secret is reserved for signing persistent tokens.
 	sessionSecret string
@@ -68,6 +70,10 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		qstore:        qstore,
 		sessionSecret: secret,
 	}
+	s.sched = scheduler.New(database, s.runScheduledScan)
+	if err := s.sched.Start(); err != nil {
+		slog.Error("scheduler start", "err", err)
+	}
 	s.mux = s.routes()
 	return s, nil
 }
@@ -75,8 +81,11 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 // Handler is the root http.Handler.
 func (s *Server) Handler() http.Handler { return s.mux }
 
-// Close stops the background worker.
-func (s *Server) Close() { s.jobs.Shutdown() }
+// Close stops the background worker and the scheduler.
+func (s *Server) Close() {
+	s.sched.Stop()
+	s.jobs.Shutdown()
+}
 
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
@@ -123,6 +132,12 @@ func (s *Server) routes() http.Handler {
 			r.Post("/quarantine", s.handleQuarantineFile)
 			r.Post("/quarantine/{id}/restore", s.handleRestoreQuarantine)
 			r.Post("/quarantine/{id}/delete", s.handleDeleteQuarantine)
+
+			r.Get("/schedules", s.handleListSchedules)
+			r.Post("/schedules", s.handleCreateSchedule)
+			r.Put("/schedules/{id}", s.handleUpdateSchedule)
+			r.Delete("/schedules/{id}", s.handleDeleteSchedule)
+			r.Post("/schedules/{id}/run", s.handleRunSchedule)
 
 			r.Get("/browse", s.handleBrowse)
 
