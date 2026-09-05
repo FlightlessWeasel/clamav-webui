@@ -10,27 +10,28 @@ import (
 )
 
 func (s *Server) handleClamAVInstall(w http.ResponseWriter, r *http.Request) {
-	s.enqueueApt(w, "apt-install", func(ctx context.Context, jc *worker.JobContext) error {
+	s.enqueueJob(w, "apt-install", 30*time.Minute, func(ctx context.Context, jc *worker.JobContext) error {
 		return s.clam.InstallClamAV(ctx, func(line string) { jc.Logf("%s", line) })
 	})
 }
 
 func (s *Server) handleClamAVUpgrade(w http.ResponseWriter, r *http.Request) {
-	s.enqueueApt(w, "apt-upgrade", func(ctx context.Context, jc *worker.JobContext) error {
+	s.enqueueJob(w, "apt-upgrade", 30*time.Minute, func(ctx context.Context, jc *worker.JobContext) error {
 		return s.clam.UpgradeClamAV(ctx, func(line string) { jc.Logf("%s", line) })
 	})
 }
 
-// enqueueApt schedules an apt job with a hard time cap and returns its id.
-func (s *Server) enqueueApt(w http.ResponseWriter, kind string, fn worker.TaskFunc) {
+// enqueueJob schedules fn as a worker job with a hard time cap and writes
+// {"job_id": N} with 202.
+func (s *Server) enqueueJob(w http.ResponseWriter, kind string, timeout time.Duration, fn worker.TaskFunc) {
 	wrapped := func(ctx context.Context, jc *worker.JobContext) error {
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		return fn(ctx, jc)
 	}
 	id, err := s.jobs.Enqueue(kind, nil, wrapped)
 	if err != nil {
-		slog.Error("clamav: enqueue", "kind", kind, "err", err)
+		slog.Error("enqueue job", "kind", kind, "err", err)
 		writeError(w, http.StatusServiceUnavailable, "could not schedule job")
 		return
 	}

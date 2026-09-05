@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,20 +16,47 @@ import (
 	"github.com/FlightlessWeasel/clamav-webui/internal/config"
 )
 
-// stubRunner implements clamav.Runner with canned answers keyed by the joined
-// command line.
+// stubRunner implements clamav.Runner and clamav.FS with canned answers keyed
+// by the joined command line / file basename.
 type stubRunner struct {
 	out   map[string]string
 	err   map[string]error
 	have  map[string]bool
 	lines map[string][]string
+	files map[string]string // basename -> content ("" ok); presence = Stat succeeds
 }
 
 func newStub() *stubRunner {
-	return &stubRunner{out: map[string]string{}, err: map[string]error{}, have: map[string]bool{}, lines: map[string][]string{}}
+	return &stubRunner{
+		out: map[string]string{}, err: map[string]error{}, have: map[string]bool{},
+		lines: map[string][]string{}, files: map[string]string{},
+	}
 }
 
 func ckey(c clamav.Cmd) string { return strings.TrimSpace(c.Name + " " + strings.Join(c.Args, " ")) }
+
+func (s *stubRunner) Stat(name string) (os.FileInfo, error) {
+	if _, ok := s.files[path.Base(name)]; ok {
+		return stubInfo{name: path.Base(name)}, nil
+	}
+	return nil, os.ErrNotExist
+}
+
+func (s *stubRunner) ReadFile(name string) ([]byte, error) {
+	if c, ok := s.files[path.Base(name)]; ok {
+		return []byte(c), nil
+	}
+	return nil, os.ErrNotExist
+}
+
+type stubInfo struct{ name string }
+
+func (i stubInfo) Name() string       { return i.name }
+func (i stubInfo) Size() int64        { return 1024 }
+func (i stubInfo) Mode() fs.FileMode  { return 0o644 }
+func (i stubInfo) ModTime() time.Time { return time.Now().Add(-time.Hour) }
+func (i stubInfo) IsDir() bool        { return false }
+func (i stubInfo) Sys() any           { return nil }
 
 func (s *stubRunner) Run(_ context.Context, c clamav.Cmd) (clamav.Result, error) {
 	k := ckey(c)
@@ -75,7 +105,11 @@ func showBlocks(active string) string {
 func authedServer(t *testing.T, r clamav.Runner) (*Server, []*http.Cookie, string) {
 	t.Helper()
 	s := newTestServer(t)
-	s.clam = clamav.NewManagerWithRunner(config.Defaults(), r)
+	if fsys, ok := r.(clamav.FS); ok {
+		s.clam = clamav.NewManagerWithDeps(config.Defaults(), r, fsys)
+	} else {
+		s.clam = clamav.NewManagerWithRunner(config.Defaults(), r)
+	}
 
 	rec := do(t, s, http.MethodPost, "/api/setup", `{"password":"a-good-password"}`, nil, "")
 	if rec.Code != http.StatusNoContent {
@@ -169,6 +203,81 @@ func TestInstallEndpointEnqueuesJob(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("install job did not finish")
+}
+
+func TestSignaturesEndpoint(t *testing.T) {
+	r := newStub()
+	r.have["freshclam"] = true
+	r.have["sigtool"] = true
+	r.files["daily.cld"] = ""
+	r.files["main.cvd"] = ""
+	r.files["freshclam.conf"] = "Checks 24\n"
+	r.out["sigtool --info /var/lib/clamav/daily.cld"] = "Version: 27000\nSignatures: 2000000\n"
+	r.out["sigtool --info /var/lib/clamav/main.cvd"] = "Version: 62\nSignatures: 6000000\n"
+	r.out["systemctl show clamav-freshclam"+showProps] = "Id=clamav-freshclam.service\nLoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\n"
+	s, cookies, _ := authedServer(t, r)
+
+	rec := do(t, s, http.MethodGet, "/api/signatures", "", cookies, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
+	}
+	var sig struct {
+		TotalSigs int `json:"total_sigs"`
+		Checks    int `json:"checks"`
+		Databases []struct {
+			Name    string `json:"name"`
+			Present bool   `json:"present"`
+		} `json:"databases"`
+		FreshclamService clamav.ServiceState `json:"freshclam_service"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &sig)
+	if sig.TotalSigs != 8000000 || sig.Checks != 24 {
+		t.Errorf("sig = %+v", sig)
+	}
+	if len(sig.Databases) != 3 {
+		t.Fatalf("want 3 db rows, got %d", len(sig.Databases))
+	}
+	if sig.FreshclamService.Active != "active" {
+		t.Errorf("freshclam svc = %+v", sig.FreshclamService)
+	}
+}
+
+func TestSignaturesUpdateEnqueuesJob(t *testing.T) {
+	r := newStub()
+	r.have["freshclam"] = true
+	r.out["systemctl show clamav-freshclam"+showProps] = "Id=clamav-freshclam.service\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nUnitFileState=disabled\n"
+	r.lines["freshclam --stdout"] = []string{"daily.cld updated (version: 27001)"}
+	s, cookies, csrf := authedServer(t, r)
+
+	rec := do(t, s, http.MethodPost, "/api/signatures/update", "", cookies, csrf)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body)
+	}
+	var body struct {
+		JobID int64 `json:"job_id"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.JobID == 0 {
+		t.Fatal("no job id")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		jr := do(t, s, http.MethodGet, "/api/jobs/"+strconv.FormatInt(body.JobID, 10), "", cookies, "")
+		var job struct {
+			Status string `json:"status"`
+			Log    string `json:"log"`
+		}
+		json.Unmarshal(jr.Body.Bytes(), &job)
+		if job.Status == "done" {
+			if !strings.Contains(job.Log, "daily.cld updated") {
+				t.Errorf("job log = %q", job.Log)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("freshclam job did not finish")
 }
 
 func TestDashboardEndpoint(t *testing.T) {

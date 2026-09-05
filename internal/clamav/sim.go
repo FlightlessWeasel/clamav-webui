@@ -3,6 +3,8 @@ package clamav
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,7 @@ type SimRunner struct {
 	engine    string
 	dbVersion string
 	dbDate    string
+	dbTime    time.Time
 	units     map[string]*simUnit
 }
 
@@ -28,10 +31,12 @@ type simUnit struct {
 
 // NewSimRunner returns a SimRunner seeded as "ClamAV not installed".
 func NewSimRunner() *SimRunner {
+	t := time.Now().Add(-26 * time.Hour)
 	return &SimRunner{
 		engine:    "1.4.1",
 		dbVersion: "27342",
-		dbDate:    time.Now().Add(-26 * time.Hour).Format("Mon Jan 2 15:04:05 2006"),
+		dbDate:    t.Format("Mon Jan 2 15:04:05 2006"),
+		dbTime:    t,
 		units: map[string]*simUnit{
 			"clamav-daemon":    {},
 			"clamav-freshclam": {},
@@ -39,6 +44,46 @@ func NewSimRunner() *SimRunner {
 		},
 	}
 }
+
+// Stat / ReadFile implement clamav.FS so the Signatures view has something to
+// show under the simulator.
+
+func (s *SimRunner) Stat(name string) (os.FileInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.installed {
+		return nil, os.ErrNotExist
+	}
+	base := filepath.Base(name)
+	if base == "main.cvd" || base == "daily.cld" || base == "bytecode.cld" {
+		return simFileInfo{name: base, size: 1 << 20, mod: s.dbTime}, nil
+	}
+	return nil, os.ErrNotExist
+}
+
+func (s *SimRunner) ReadFile(name string) ([]byte, error) {
+	base := filepath.Base(name)
+	switch base {
+	case "freshclam.conf":
+		return []byte("DatabaseMirror database.clamav.net\nChecks 24\n"), nil
+	case "clamd.conf":
+		return []byte("LogVerbose false\nMaxThreads 12\n"), nil
+	}
+	return nil, os.ErrNotExist
+}
+
+type simFileInfo struct {
+	name string
+	size int64
+	mod  time.Time
+}
+
+func (f simFileInfo) Name() string       { return f.name }
+func (f simFileInfo) Size() int64        { return f.size }
+func (f simFileInfo) Mode() os.FileMode  { return 0o644 }
+func (f simFileInfo) ModTime() time.Time { return f.mod }
+func (f simFileInfo) IsDir() bool        { return false }
+func (f simFileInfo) Sys() any           { return nil }
 
 func (s *SimRunner) LookPath(name string) (string, bool) {
 	s.mu.Lock()
@@ -72,6 +117,13 @@ func (s *SimRunner) Run(_ context.Context, c Cmd) (Result, error) {
 				inst = "1.4.1+dfsg-1"
 			}
 			return out("clamav:\n  Installed: %s\n  Candidate: 1.4.1+dfsg-1\n", inst), nil
+		}
+	case "sigtool":
+		if len(c.Args) == 2 && c.Args[0] == "--info" {
+			name := filepath.Base(c.Args[1])
+			sigs := map[string]int{"main.cvd": 6600000, "daily.cld": 2069000, "bytecode.cld": 340}[name]
+			return out("File: %s\nBuild time: %s\nVersion: %s\nSignatures: %d\n",
+				name, s.dbTime.Format("02 Jan 2006 15-04 -0700"), s.dbVersion, sigs), nil
 		}
 	case "systemctl":
 		return s.systemctl(c.Args)
@@ -165,11 +217,13 @@ func (s *SimRunner) Stream(_ context.Context, c Cmd, onLine func(string)) error 
 		}
 		s.mu.Lock()
 		s.installed = true
+		now := time.Now()
+		s.dbTime = now.Add(-2 * time.Hour)
+		s.dbDate = s.dbTime.Format("Mon Jan 2 15:04:05 2006")
 		s.units["clamav-freshclam"].active = true
 		s.units["clamav-freshclam"].enabled = true
 		s.units["clamav-daemon"].active = true
 		s.units["clamav-daemon"].enabled = true
-		now := time.Now()
 		s.units["clamav-freshclam"].since = now
 		s.units["clamav-daemon"].since = now
 		s.mu.Unlock()
@@ -186,7 +240,8 @@ func (s *SimRunner) Stream(_ context.Context, c Cmd, onLine func(string)) error 
 		}
 		s.mu.Lock()
 		s.dbVersion = "27343"
-		s.dbDate = time.Now().Format("Mon Jan 2 15:04:05 2006")
+		s.dbTime = time.Now()
+		s.dbDate = s.dbTime.Format("Mon Jan 2 15:04:05 2006")
 		s.mu.Unlock()
 		return nil
 	}

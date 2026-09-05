@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { getDashboard } from "../api/client";
 import { useAsync } from "../lib/useAsync";
 import { useEvents } from "../lib/useEvents";
+import { humanCount, humanDuration } from "../lib/format";
 import { Alert, Card, Spinner } from "../components/ui";
 import ServiceCard from "../components/ServiceCard";
 
@@ -68,8 +69,26 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Card title="Signatures">
-          <p className="text-sm text-zinc-500">Freshness details arrive with the signatures step.</p>
+        <Card
+          title="Signatures"
+          actions={
+            <Link className="text-xs text-sky-600 hover:underline" to="/signatures">
+              Details
+            </Link>
+          }
+        >
+          {data.signatures ? (
+            <>
+              <p className="text-2xl font-semibold">
+                {data.signatures.age_seconds < 0 ? "—" : humanDuration(data.signatures.age_seconds)}
+              </p>
+              <p className="text-xs text-zinc-500">
+                since last update · {humanCount(data.signatures.total_sigs)} sigs
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-500">unavailable</p>
+          )}
         </Card>
         <Card title="Last scan">
           <p className="text-sm text-zinc-500">No scans yet.</p>

@@ -3,8 +3,55 @@ package clamav
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
+
+// fakeFS is an in-memory clamav.FS. Keys are matched by basename.
+type fakeFS struct {
+	files map[string]fakeFile
+}
+
+type fakeFile struct {
+	content []byte
+	mod     time.Time
+}
+
+func newFakeFS() *fakeFS { return &fakeFS{files: map[string]fakeFile{}} }
+
+func (f *fakeFS) put(name string, content string, mod time.Time) *fakeFS {
+	f.files[name] = fakeFile{content: []byte(content), mod: mod}
+	return f
+}
+
+func (f *fakeFS) Stat(name string) (os.FileInfo, error) {
+	if ff, ok := f.files[filepath.Base(name)]; ok {
+		return fakeInfo{name: filepath.Base(name), size: int64(len(ff.content)), mod: ff.mod}, nil
+	}
+	return nil, os.ErrNotExist
+}
+
+func (f *fakeFS) ReadFile(name string) ([]byte, error) {
+	if ff, ok := f.files[filepath.Base(name)]; ok {
+		return ff.content, nil
+	}
+	return nil, os.ErrNotExist
+}
+
+type fakeInfo struct {
+	name string
+	size int64
+	mod  time.Time
+}
+
+func (i fakeInfo) Name() string       { return i.name }
+func (i fakeInfo) Size() int64        { return i.size }
+func (i fakeInfo) Mode() os.FileMode  { return 0o644 }
+func (i fakeInfo) ModTime() time.Time { return i.mod }
+func (i fakeInfo) IsDir() bool        { return false }
+func (i fakeInfo) Sys() any           { return nil }
 
 // fakeRunner is a scripted Runner for tests. Keys are "name arg1 arg2 ...".
 type fakeRunner struct {

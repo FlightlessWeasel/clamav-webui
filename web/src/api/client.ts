@@ -93,6 +93,7 @@ export type ServiceState = {
 export type Dashboard = {
   install: Install;
   services: ServiceState[];
+  signatures: Signatures | null;
   quarantine_held: number;
   last_scan: unknown;
 };
@@ -107,6 +108,31 @@ export type Job = {
   finished_at?: string;
   created_at: string;
 };
+
+export type SignatureDB = {
+  name: string;
+  file: string;
+  present: boolean;
+  version: number;
+  sigs: number;
+  build_time: string;
+  mtime_unix: number;
+};
+
+export type Signatures = {
+  db_dir: string;
+  databases: SignatureDB[];
+  total_sigs: number;
+  newest_unix: number;
+  age_seconds: number;
+  freshclam_service: ServiceState;
+  checks: number;
+  has_freshclam: boolean;
+  has_sigtool: boolean;
+};
+
+export const getSignatures = () => api<Signatures>("/signatures");
+export const signaturesUpdate = () => api<{ job_id: number }>("/signatures/update", { method: "POST" });
 
 export const getDashboard = () => api<Dashboard>("/dashboard");
 export const getServices = () => api<{ services: ServiceState[] }>("/services");

@@ -10,6 +10,7 @@ import (
 type dashboardResponse struct {
 	Install    any `json:"install"`
 	Services   any `json:"services"`
+	Signatures any `json:"signatures"`
 	Quarantine int `json:"quarantine_held"`
 	LastScan   any `json:"last_scan"`
 }
@@ -31,10 +32,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "could not query systemd")
 		return
 	}
+	// Signature state is best-effort: a failure here shouldn't blank the page.
+	var signatures any
+	if sig, err := s.clam.Signatures(ctx); err != nil {
+		slog.Warn("dashboard: signatures", "err", err)
+	} else {
+		signatures = sig
+	}
 
 	writeJSON(w, http.StatusOK, dashboardResponse{
 		Install:    install,
 		Services:   services,
+		Signatures: signatures,
 		Quarantine: 0,   // populated once the quarantine step lands
 		LastScan:   nil, // populated once scanning lands
 	})

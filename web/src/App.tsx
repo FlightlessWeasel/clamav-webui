@@ -6,6 +6,7 @@ import Setup from "./pages/Setup";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Install from "./pages/Install";
+import Signatures from "./pages/Signatures";
 import Stub from "./pages/Stub";
 
 function Gate() {
@@ -29,7 +30,7 @@ function Gate() {
         <Route path="scan" element={<Stub title="Scan" />} />
         <Route path="scans" element={<Stub title="Scan history" />} />
         <Route path="schedules" element={<Stub title="Schedules" />} />
-        <Route path="signatures" element={<Stub title="Signatures" />} />
+        <Route path="signatures" element={<Signatures />} />
         <Route path="quarantine" element={<Stub title="Quarantine" />} />
         <Route path="protection" element={<Stub title="Protection" />} />
         <Route path="activity" element={<Stub title="Activity" />} />

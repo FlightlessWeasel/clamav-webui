@@ -43,7 +43,8 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 	clam := clamav.NewManager(cfg)
 	if os.Getenv("CLAMWEB_DEV_SIM") == "1" {
 		slog.Warn("CLAMWEB_DEV_SIM=1: using the in-memory ClamAV simulator, not the real toolchain")
-		clam = clamav.NewManagerWithRunner(cfg, clamav.NewSimRunner())
+		sim := clamav.NewSimRunner()
+		clam = clamav.NewManagerWithDeps(cfg, sim, sim)
 	}
 	secret, err := database.EnsureSessionSecret()
 	if err != nil {
@@ -101,6 +102,9 @@ func (s *Server) routes() http.Handler {
 
 			r.Post("/clamav/install", s.handleClamAVInstall)
 			r.Post("/clamav/upgrade", s.handleClamAVUpgrade)
+
+			r.Get("/signatures", s.handleSignatures)
+			r.Post("/signatures/update", s.handleSignaturesUpdate)
 
 			r.Get("/jobs/{id}", s.handleGetJob)
 		})
