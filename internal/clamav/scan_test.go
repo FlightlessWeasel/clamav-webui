@@ -31,9 +31,6 @@ func TestParseScanLinesInfected(t *testing.T) {
 	if res.EngineVersion != "1.0.3" {
 		t.Errorf("engine = %q", res.EngineVersion)
 	}
-	if res.DurationSec != 8.245 {
-		t.Errorf("duration = %v", res.DurationSec)
-	}
 	if len(found) != 2 {
 		t.Fatalf("callbacks = %d, want 2", len(found))
 	}
@@ -78,7 +75,7 @@ func TestScanUsesClamdWhenDaemonActive(t *testing.T) {
 		})
 	m := NewManagerWithRunner(config.Defaults(), f)
 
-	res, err := m.Scan(context.Background(), []string{"/tmp/scan"}, ScanOptions{}, nil, nil)
+	res, err := m.Scan(context.Background(), []string{"/tmp/scan"}, ScanOptions{}, ScanCallbacks{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +95,11 @@ func TestScanFallsBackToClamscan(t *testing.T) {
 	m := NewManagerWithRunner(config.Defaults(), f)
 
 	var live []ScanFinding
-	res, err := m.Scan(context.Background(), []string{"/tmp/scan"},
-		ScanOptions{Recursive: true}, nil, func(x ScanFinding) { live = append(live, x) })
+	var lastProgress [2]int
+	res, err := m.Scan(context.Background(), []string{"/tmp/scan"}, ScanOptions{Recursive: true}, ScanCallbacks{
+		Finding:  func(x ScanFinding) { live = append(live, x) },
+		Progress: func(scanned, infected int) { lastProgress = [2]int{scanned, infected} },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +109,33 @@ func TestScanFallsBackToClamscan(t *testing.T) {
 	if res.Scanned != 4 || res.Infected != 2 || len(live) != 2 {
 		t.Errorf("res=%+v live=%d", res, len(live))
 	}
+	if lastProgress != [2]int{4, 2} {
+		t.Errorf("final progress = %v, want [4 2]", lastProgress)
+	}
+}
+
+func TestScanDaemonScannedCountFallback(t *testing.T) {
+	// clamdscan's summary has no "Scanned files:" line — the OK/FOUND line
+	// count must fill it in.
+	f := newFake().have("clamscan", "clamdscan").
+		on(showKey("clamav-daemon"), fakeResp{stdout: "Id=clamav-daemon.service\nLoadState=loaded\nActiveState=active\nSubState=running\n"}).
+		on("clamdscan --fdpass --multiscan --stdout /tmp/scan", fakeResp{stdout: strings.Join([]string{
+			"/tmp/scan/a: OK",
+			"/tmp/scan/b: OK",
+			"/tmp/scan/c: Test.Sig FOUND",
+			"----------- SCAN SUMMARY -----------",
+			"Infected files: 1",
+			"Time: 0.5 sec (0 m 0 s)",
+		}, "\n"), exit: 1})
+	m := NewManagerWithRunner(config.Defaults(), f)
+
+	res, err := m.Scan(context.Background(), []string{"/tmp/scan"}, ScanOptions{}, ScanCallbacks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Scanned != 3 {
+		t.Errorf("Scanned = %d, want 3 (fallback line count)", res.Scanned)
+	}
 }
 
 func TestScanExitTwoIsError(t *testing.T) {
@@ -116,7 +143,7 @@ func TestScanExitTwoIsError(t *testing.T) {
 		on("clamscan --stdout /nope", fakeResp{stderr: "cannot access /nope", exit: 2})
 	m := NewManagerWithRunner(config.Defaults(), f)
 
-	_, err := m.Scan(context.Background(), []string{"/nope"}, ScanOptions{}, nil, nil)
+	_, err := m.Scan(context.Background(), []string{"/nope"}, ScanOptions{}, ScanCallbacks{})
 	if err == nil {
 		t.Fatal("expected error for exit code 2")
 	}
@@ -124,7 +151,7 @@ func TestScanExitTwoIsError(t *testing.T) {
 
 func TestScanNotInstalled(t *testing.T) {
 	m := NewManagerWithRunner(config.Defaults(), newFake())
-	_, err := m.Scan(context.Background(), []string{"/x"}, ScanOptions{}, nil, nil)
+	_, err := m.Scan(context.Background(), []string{"/x"}, ScanOptions{}, ScanCallbacks{})
 	if err != ErrNotInstalled {
 		t.Fatalf("err = %v", err)
 	}

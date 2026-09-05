@@ -33,31 +33,43 @@ type ScanResult struct {
 	Scanned       int           `json:"scanned"`
 	Infected      int           `json:"infected"`
 	Findings      []ScanFinding `json:"findings"`
-	DurationSec   float64       `json:"duration_sec"`
+
+	// resultLines counts "<path>: OK|FOUND" lines, a fallback scanned count
+	// for clamdscan (whose summary omits "Scanned files").
+	resultLines int
 }
 
 var (
 	foundRE    = regexp.MustCompile(`^(.*): (.+) FOUND$`)
+	okRE       = regexp.MustCompile(`: OK$`)
 	summaryInt = regexp.MustCompile(`^(Infected files|Scanned files|Total errors):\s*(\d+)`)
-	summaryDur = regexp.MustCompile(`^Time:\s*([\d.]+)\s*sec`)
 	engineRE   = regexp.MustCompile(`^Engine version:\s*(\S+)`)
 )
 
-// Scan scans paths. onLine receives every raw output line; onFinding is called
-// for each infected file as it is discovered. A "virus found" exit (clamscan
-// code 1) is not treated as an error.
-func (m *Manager) Scan(
-	ctx context.Context,
-	paths []string,
-	opts ScanOptions,
-	onLine func(string),
-	onFinding func(ScanFinding),
-) (ScanResult, error) {
-	if onLine == nil {
-		onLine = func(string) {}
+// ScanCallbacks are the optional progress hooks for a scan. Any field may be
+// nil.
+type ScanCallbacks struct {
+	// Line receives every raw output line, including the leading "$ cmd ..."
+	// echo.
+	Line func(string)
+	// Finding is called once per infected file as it is discovered.
+	Finding func(ScanFinding)
+	// Progress is called as running totals change (scanned files, infected so
+	// far) so the caller can persist/stream interim state.
+	Progress func(scanned, infected int)
+}
+
+// Scan scans paths, reporting progress through cb. A "virus found" exit
+// (clamscan/clamdscan code 1) is not treated as an error.
+func (m *Manager) Scan(ctx context.Context, paths []string, opts ScanOptions, cb ScanCallbacks) (ScanResult, error) {
+	if cb.Line == nil {
+		cb.Line = func(string) {}
 	}
-	if onFinding == nil {
-		onFinding = func(ScanFinding) {}
+	if cb.Finding == nil {
+		cb.Finding = func(ScanFinding) {}
+	}
+	if cb.Progress == nil {
+		cb.Progress = func(int, int) {}
 	}
 	if len(paths) == 0 {
 		return ScanResult{}, errors.New("clamav: no paths to scan")
@@ -69,14 +81,18 @@ func (m *Manager) Scan(
 	}
 
 	cmd, usedDaemon := m.buildScanCmd(ctx, paths, opts)
-	onLine("$ " + cmd.Name + " " + strings.Join(cmd.Args, " "))
+	cb.Line("$ " + cmd.Name + " " + strings.Join(cmd.Args, " "))
 
 	var res ScanResult
 	res.UsedDaemon = usedDaemon
 
 	streamErr := m.run.Stream(ctx, cmd, func(line string) {
-		onLine(line)
-		parseScanLine(line, &res, onFinding)
+		cb.Line(line)
+		before := res.resultLines
+		parseScanLine(line, &res, cb.Finding)
+		if res.resultLines != before {
+			cb.Progress(res.resultLines, len(res.Findings))
+		}
 	})
 
 	// clamscan / clamdscan: 0 = clean, 1 = infection(s) found, >=2 = error.
@@ -90,9 +106,12 @@ func (m *Manager) Scan(
 		return res, streamErr
 	}
 
-	// Trust the parsed finding count if the summary was missing.
+	// clamdscan's summary omits both counts; fall back to what we saw stream by.
 	if res.Infected == 0 && len(res.Findings) > 0 {
 		res.Infected = len(res.Findings)
+	}
+	if res.Scanned == 0 {
+		res.Scanned = res.resultLines
 	}
 	return res, nil
 }
@@ -137,7 +156,12 @@ func parseScanLine(line string, res *ScanResult, onFinding func(ScanFinding)) {
 	if m := foundRE.FindStringSubmatch(line); m != nil {
 		f := ScanFinding{Path: m[1], Signature: m[2]}
 		res.Findings = append(res.Findings, f)
+		res.resultLines++
 		onFinding(f)
+		return
+	}
+	if okRE.MatchString(line) {
+		res.resultLines++
 		return
 	}
 	if m := summaryInt.FindStringSubmatch(line); m != nil {
@@ -148,10 +172,6 @@ func parseScanLine(line string, res *ScanResult, onFinding func(ScanFinding)) {
 		case "Scanned files":
 			res.Scanned = n
 		}
-		return
-	}
-	if m := summaryDur.FindStringSubmatch(line); m != nil {
-		res.DurationSec, _ = strconv.ParseFloat(m[1], 64)
 		return
 	}
 	if m := engineRE.FindStringSubmatch(line); m != nil {

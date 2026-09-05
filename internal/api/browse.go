@@ -32,6 +32,20 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve symlinks and re-check containment so a symlink inside the root
+	// cannot be used to walk out of it.
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		realRoot, rerr := filepath.EvalSymlinks(root)
+		if rerr != nil {
+			realRoot = root
+		}
+		if !withinRoot(real, realRoot) {
+			writeError(w, http.StatusForbidden, "path is outside the allowed root")
+			return
+		}
+		dir = real
+	}
+
 	info, err := os.Stat(dir)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "no such directory")

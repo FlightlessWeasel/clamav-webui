@@ -159,11 +159,8 @@ func (m *Manager) loop() {
 }
 
 func (m *Manager) execute(q queued) {
-	if err := m.db.SetJobRunning(q.id); err != nil {
-		slog.Error("worker: set running", "job", q.id, "err", err)
-	}
-	m.publishJob(q.id, q.kind, "running", "")
-
+	// Register the cancel func before announcing "running" so a cancel that
+	// races the SSE event still finds the job.
 	jobCtx, jobCancel := context.WithCancel(m.ctx)
 	m.mu.Lock()
 	m.running[q.id] = jobCancel
@@ -174,6 +171,11 @@ func (m *Manager) execute(q queued) {
 		m.mu.Unlock()
 		jobCancel()
 	}()
+
+	if err := m.db.SetJobRunning(q.id); err != nil {
+		slog.Error("worker: set running", "job", q.id, "err", err)
+	}
+	m.publishJob(q.id, q.kind, "running", "")
 
 	jc := &JobContext{JobID: q.id, m: m}
 	err := safeRun(jobCtx, q.fn, jc)

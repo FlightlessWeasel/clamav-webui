@@ -77,11 +77,11 @@ func (m *Manager) Signatures(ctx context.Context) (Signatures, error) {
 		sig.AgeSeconds = time.Now().Unix() - sig.NewestUnix
 	}
 
-	svc, err := m.Service(ctx, "clamav-freshclam")
-	if err != nil {
-		return Signatures{}, err
+	// Service state is one optional sub-fact; a systemctl hiccup shouldn't
+	// blank the whole signatures view.
+	if svc, err := m.Service(ctx, "clamav-freshclam"); err == nil {
+		sig.FreshclamService = svc
 	}
-	sig.FreshclamService = svc
 
 	if b, err := m.fsys.ReadFile(m.cfg.FreshclamConf); err == nil {
 		if v := confValue(string(b), "Checks"); v != "" {
@@ -111,7 +111,11 @@ func (m *Manager) UpdateSignatures(ctx context.Context, onLine func(string)) err
 		}
 		defer func() {
 			onLine("$ systemctl start clamav-freshclam")
-			if e := m.ServiceAction(context.WithoutCancel(ctx), "clamav-freshclam", "start"); e != nil {
+			// Restart even if the job ctx was canceled/timed out, but with its
+			// own deadline so a hung systemctl can't pin the worker.
+			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer rcancel()
+			if e := m.ServiceAction(rctx, "clamav-freshclam", "start"); e != nil {
 				onLine("warning: could not restart clamav-freshclam: " + e.Error())
 			}
 		}()

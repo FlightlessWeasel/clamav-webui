@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,7 @@ func (s *Server) handleCreateScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, jsonErrMsg(err))
 		return
 	}
-	paths, err := sanitizeScanPaths(req.Paths)
+	paths, err := sanitizeScanPaths(req.Paths, s.cfg.BrowseRoot)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -57,14 +58,20 @@ func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int6
 	ctx, cancel := context.WithTimeout(ctx, 6*time.Hour)
 	defer cancel()
 
+	// A cancel that landed while the job sat in the queue.
+	if cur, err := s.db.GetScan(scanID); err == nil && cur.Status == "canceled" {
+		return nil
+	}
+
 	install, _ := s.clam.Detect(ctx)
 	if err := s.db.StartScan(scanID, install.EngineVersion, install.DBVersion); err != nil {
 		slog.Error("scan: start row", "scan", scanID, "err", err)
 	}
 
-	res, scanErr := s.clam.Scan(ctx, paths, opts,
-		func(line string) { jc.Logf("%s", line) },
-		func(f clamav.ScanFinding) {
+	var lastFlush time.Time
+	res, scanErr := s.clam.Scan(ctx, paths, opts, clamav.ScanCallbacks{
+		Line: func(line string) { jc.Logf("%s", line) },
+		Finding: func(f clamav.ScanFinding) {
 			if _, err := s.db.AddFinding(scanID, f.Path, f.Signature); err != nil {
 				slog.Error("scan: add finding", "scan", scanID, "err", err)
 			}
@@ -72,18 +79,33 @@ func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int6
 				"scan_id": scanID, "path": f.Path, "signature": f.Signature,
 			}})
 		},
-	)
+		Progress: func(scanned, infected int) {
+			if time.Since(lastFlush) < 2*time.Second {
+				return
+			}
+			lastFlush = time.Now()
+			_ = s.db.UpdateScanProgress(scanID, scanned, infected)
+			s.bus.Publish(sse.Event{Type: "scan-progress", Data: map[string]any{
+				"scan_id": scanID, "scanned": scanned, "infected": infected,
+			}})
+		},
+	})
+
+	infected := res.Infected
+	if infected == 0 && len(res.Findings) > 0 {
+		infected = len(res.Findings)
+	}
 
 	if scanErr != nil {
 		status := "error"
-		if errors.Is(scanErr, context.Canceled) || ctx.Err() == context.Canceled {
+		if errors.Is(scanErr, context.Canceled) || ctx.Err() != nil {
 			status = "canceled"
 		}
-		_ = s.db.FinishScan(scanID, status, res.Scanned, len(res.Findings), scanErr.Error())
+		_ = s.db.FinishScan(scanID, status, res.Scanned, infected, scanErr.Error())
 		return scanErr
 	}
 
-	_ = s.db.FinishScan(scanID, "done", res.Scanned, res.Infected, "")
+	_ = s.db.FinishScan(scanID, "done", res.Scanned, infected, "")
 	return nil
 }
 
@@ -127,6 +149,11 @@ func (s *Server) handleCancelScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "scan is not running")
 		return
 	}
+	// Mark it now so a still-queued job bails when it dequeues; also cancel the
+	// job if it is already running.
+	if scan.Status == "queued" {
+		_ = s.db.FinishScan(scan.ID, "canceled", 0, 0, "canceled before start")
+	}
 	if jobID, ok, _ := s.db.RunningJobForRef("scan", scan.ID); ok {
 		s.jobs.Cancel(jobID)
 	}
@@ -152,8 +179,9 @@ func (s *Server) scanFromURL(w http.ResponseWriter, r *http.Request) (db.Scan, e
 }
 
 // sanitizeScanPaths cleans and validates the requested scan targets: absolute
-// POSIX paths, no "..", de-duplicated, at least one.
-func sanitizeScanPaths(in []string) ([]string, error) {
+// POSIX paths, confined to browseRoot, de-duplicated, at least one.
+func sanitizeScanPaths(in []string, browseRoot string) ([]string, error) {
+	root := path.Clean("/" + strings.TrimPrefix(filepath.ToSlash(browseRoot), "/"))
 	seen := map[string]bool{}
 	var out []string
 	for _, p := range in {
@@ -164,9 +192,9 @@ func sanitizeScanPaths(in []string) ([]string, error) {
 		if !strings.HasPrefix(p, "/") {
 			return nil, errors.New("paths must be absolute")
 		}
-		clean := path.Clean(p)
-		if clean == "." || strings.Contains(clean, "..") {
-			return nil, errors.New("invalid path")
+		clean := path.Clean(p) // resolves any ".." to a concrete absolute path
+		if root != "/" && clean != root && !strings.HasPrefix(clean, root+"/") {
+			return nil, errors.New("path is outside the allowed root")
 		}
 		if !seen[clean] {
 			seen[clean] = true
@@ -174,7 +202,7 @@ func sanitizeScanPaths(in []string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, errors.New("at least one path is required")
+		return nil, errors.New("at least one valid path is required")
 	}
 	if len(out) > 64 {
 		return nil, errors.New("too many paths (max 64)")
