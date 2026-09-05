@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/FlightlessWeasel/clamav-webui/internal/auth"
+	"github.com/FlightlessWeasel/clamav-webui/internal/clamav"
 	"github.com/FlightlessWeasel/clamav-webui/internal/config"
 	"github.com/FlightlessWeasel/clamav-webui/internal/db"
+	"github.com/FlightlessWeasel/clamav-webui/internal/sse"
 	"github.com/FlightlessWeasel/clamav-webui/internal/webui"
+	"github.com/FlightlessWeasel/clamav-webui/internal/worker"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -23,17 +27,30 @@ type Server struct {
 	version  string
 	sessions *auth.SessionManager
 	logins   *auth.LoginLimiter
+	clam     *clamav.Manager
+	bus      *sse.Bus
+	jobs     *worker.Manager
 	mux      http.Handler
 }
 
-// New builds a Server and its route table.
+// New builds a Server, its background worker, and the route table. Call Close
+// when done.
 func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
+	bus := sse.NewBus()
+	clam := clamav.NewManager(cfg)
+	if os.Getenv("CLAMWEB_DEV_SIM") == "1" {
+		slog.Warn("CLAMWEB_DEV_SIM=1: using the in-memory ClamAV simulator, not the real toolchain")
+		clam = clamav.NewManagerWithRunner(cfg, clamav.NewSimRunner())
+	}
 	s := &Server{
 		cfg:      cfg,
 		db:       database,
 		version:  version,
 		sessions: auth.NewSessionManager(),
 		logins:   auth.NewLoginLimiter(5, time.Minute),
+		clam:     clam,
+		bus:      bus,
+		jobs:     worker.New(database, bus, 2),
 	}
 	s.mux = s.routes()
 	return s, nil
@@ -41,6 +58,9 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 
 // Handler is the root http.Handler.
 func (s *Server) Handler() http.Handler { return s.mux }
+
+// Close stops the background worker.
+func (s *Server) Close() { s.jobs.Shutdown() }
 
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
@@ -61,7 +81,20 @@ func (s *Server) routes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 			r.Use(s.csrfGuard)
+
 			r.Post("/logout", s.handleLogout)
+
+			r.Get("/dashboard", s.handleDashboard)
+			r.Get("/events", s.handleEvents)
+
+			r.Get("/services", s.handleServices)
+			r.Post("/services/{unit}/{action}", s.handleServiceAction)
+			r.Get("/services/{unit}/logs", s.handleServiceLogs)
+
+			r.Post("/clamav/install", s.handleClamAVInstall)
+			r.Post("/clamav/upgrade", s.handleClamAVUpgrade)
+
+			r.Get("/jobs/{id}", s.handleGetJob)
 		})
 	})
 
@@ -94,7 +127,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// decodeJSON reads the request body into v, capping the size.
+// decodeJSON reads the request body into v, capping the size at 1 MiB.
 func decodeJSON(r *http.Request, v any) error {
 	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
 	dec.DisallowUnknownFields()

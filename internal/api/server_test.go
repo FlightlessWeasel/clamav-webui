@@ -25,6 +25,7 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("api.New: %v", err)
 	}
+	t.Cleanup(s.Close)
 	return s
 }
 

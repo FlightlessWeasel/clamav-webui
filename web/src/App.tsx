@@ -5,6 +5,8 @@ import Layout from "./components/Layout";
 import Setup from "./pages/Setup";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import Install from "./pages/Install";
+import Stub from "./pages/Stub";
 
 function Gate() {
   const { status, loading } = useAuth();
@@ -23,6 +25,15 @@ function Gate() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
+        <Route path="install" element={<Install />} />
+        <Route path="scan" element={<Stub title="Scan" />} />
+        <Route path="scans" element={<Stub title="Scan history" />} />
+        <Route path="schedules" element={<Stub title="Schedules" />} />
+        <Route path="signatures" element={<Stub title="Signatures" />} />
+        <Route path="quarantine" element={<Stub title="Quarantine" />} />
+        <Route path="protection" element={<Stub title="Protection" />} />
+        <Route path="activity" element={<Stub title="Activity" />} />
+        <Route path="settings" element={<Stub title="Settings" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

@@ -60,6 +60,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	defer apiSrv.Close()
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

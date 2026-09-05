@@ -66,3 +66,54 @@ export const getStatus = () => api<Status>("/status");
 export const setupAdmin = (password: string) => api<void>("/setup", { method: "POST", body: { password } });
 export const login = (password: string) => api<void>("/login", { method: "POST", body: { password } });
 export const logout = () => api<void>("/logout", { method: "POST" });
+
+export type Install = {
+  installed: boolean;
+  engine_version: string;
+  db_version: string;
+  db_date: string;
+  has_daemon: boolean;
+  has_freshclam: boolean;
+  has_clamonacc: boolean;
+  apt_installed: string;
+  apt_candidate: string;
+  upgrade_available: boolean;
+};
+
+export type ServiceState = {
+  unit: string;
+  load: string;
+  active: string;
+  sub: string;
+  enabled: string;
+  installed: boolean;
+  since_unix: number;
+};
+
+export type Dashboard = {
+  install: Install;
+  services: ServiceState[];
+  quarantine_held: number;
+  last_scan: unknown;
+};
+
+export type Job = {
+  id: number;
+  kind: string;
+  status: "queued" | "running" | "done" | "error";
+  log: string;
+  error?: string;
+  started_at?: string;
+  finished_at?: string;
+  created_at: string;
+};
+
+export const getDashboard = () => api<Dashboard>("/dashboard");
+export const getServices = () => api<{ services: ServiceState[] }>("/services");
+export const serviceAction = (unit: string, action: string) =>
+  api<ServiceState>(`/services/${unit}/${action}`, { method: "POST" });
+export const serviceLogs = (unit: string, lines = 200) =>
+  api<{ unit: string; logs: string }>(`/services/${unit}/logs?lines=${lines}`);
+export const clamavInstall = () => api<{ job_id: number }>("/clamav/install", { method: "POST" });
+export const clamavUpgrade = () => api<{ job_id: number }>("/clamav/upgrade", { method: "POST" });
+export const getJob = (id: number) => api<Job>(`/jobs/${id}`);
