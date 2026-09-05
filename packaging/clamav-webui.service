@@ -1,0 +1,25 @@
+[Unit]
+Description=ClamAV WebUI
+Documentation=https://github.com/FlightlessWeasel/clamav-webui
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as root: it installs/updates ClamAV with apt, manages the
+# clamav-daemon / clamav-freshclam / clamav-clamonacc units, edits
+# /etc/clamav/*.conf, and moves quarantined files. A locked-down
+# dedicated-user + sudoers.d mode is a planned follow-up.
+User=root
+Environment=CLAMWEB_CONFIG_DIR=/var/lib/clamav-webui
+Environment=CLAMWEB_ADDR=:8080
+ExecStart=/usr/bin/clamav-webui
+Restart=on-failure
+RestartSec=5
+
+# No sandboxing directives on purpose. The service needs apt, systemctl,
+# journalctl, fanotify and full filesystem visibility for scanning.
+StateDirectory=clamav-webui
+
+[Install]
+WantedBy=multi-user.target

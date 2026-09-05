@@ -1,0 +1,75 @@
+# goreleaser config for clamav-webui.
+# The frontend must be built into internal/webui/dist BEFORE goreleaser runs:
+#   npm --prefix web ci && npm --prefix web run build
+# The release CI workflow does this; for a local dry run:
+#   npm --prefix web ci && npm --prefix web run build
+#   goreleaser release --snapshot --clean
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: clamav-webui
+    main: ./cmd/clamav-webui
+    binary: clamav-webui
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+      - packaging/clamav-webui.service
+
+nfpms:
+  - id: deb
+    package_name: clamav-webui
+    vendor: clamav-webui
+    homepage: https://github.com/FlightlessWeasel/clamav-webui
+    maintainer: clamav-webui maintainers
+    description: Web UI to install, update, and operate ClamAV on a headless server.
+    license: MIT
+    formats: [deb]
+    bindir: /usr/bin
+    dependencies:
+      - systemd
+    recommends:
+      - clamav
+      - clamav-daemon
+      - clamav-freshclam
+    contents:
+      - src: packaging/clamav-webui.service
+        dst: /lib/systemd/system/clamav-webui.service
+    scripts:
+      postinstall: packaging/postinstall.sh
+      preremove: packaging/preremove.sh
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  # Ship the headless installer alongside the archives so a server can bootstrap
+  # with:  curl -fsSL .../releases/latest/download/install.sh | sudo bash
+  extra_files:
+    - glob: ./scripts/install.sh
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:", "^ci:"]
