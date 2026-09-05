@@ -45,11 +45,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		lastScan = scans[0]
 	}
 
+	held, _ := s.db.CountQuarantineHeld()
+
 	writeJSON(w, http.StatusOK, dashboardResponse{
 		Install:    install,
 		Services:   services,
 		Signatures: signatures,
-		Quarantine: 0, // populated once the quarantine step lands
+		Quarantine: held,
 		LastScan:   lastScan,
 	})
 }

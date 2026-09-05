@@ -13,6 +13,7 @@ import (
 	"github.com/FlightlessWeasel/clamav-webui/internal/clamav"
 	"github.com/FlightlessWeasel/clamav-webui/internal/config"
 	"github.com/FlightlessWeasel/clamav-webui/internal/db"
+	"github.com/FlightlessWeasel/clamav-webui/internal/quarantine"
 	"github.com/FlightlessWeasel/clamav-webui/internal/sse"
 	"github.com/FlightlessWeasel/clamav-webui/internal/webui"
 	"github.com/FlightlessWeasel/clamav-webui/internal/worker"
@@ -30,6 +31,7 @@ type Server struct {
 	clam     *clamav.Manager
 	bus      *sse.Bus
 	jobs     *worker.Manager
+	qstore   *quarantine.Store
 	// sessionSecret is persisted at first start. Sessions are currently
 	// in-memory only; the secret is reserved for signing persistent tokens.
 	sessionSecret string
@@ -50,6 +52,10 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	qstore, err := quarantine.NewStore(cfg.QuarantineDir())
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		cfg:           cfg,
 		db:            database,
@@ -59,6 +65,7 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		clam:          clam,
 		bus:           bus,
 		jobs:          worker.New(database, bus, 2),
+		qstore:        qstore,
 		sessionSecret: secret,
 	}
 	s.mux = s.routes()
@@ -111,6 +118,11 @@ func (s *Server) routes() http.Handler {
 			r.Get("/scans/{id}", s.handleGetScan)
 			r.Get("/scans/{id}/findings", s.handleScanFindings)
 			r.Post("/scans/{id}/cancel", s.handleCancelScan)
+
+			r.Get("/quarantine", s.handleListQuarantine)
+			r.Post("/quarantine", s.handleQuarantineFile)
+			r.Post("/quarantine/{id}/restore", s.handleRestoreQuarantine)
+			r.Post("/quarantine/{id}/delete", s.handleDeleteQuarantine)
 
 			r.Get("/browse", s.handleBrowse)
 

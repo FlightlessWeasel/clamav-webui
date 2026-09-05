@@ -145,6 +145,25 @@ export const getScanFindings = (id: number) => api<{ findings: ScanFinding[] }>(
 export const cancelScan = (id: number) => api<{ result: string }>(`/scans/${id}/cancel`, { method: "POST" });
 export const browse = (path: string) => api<BrowseResult>(`/browse?path=${encodeURIComponent(path)}`);
 
+export type QuarantineItem = {
+  id: number;
+  store_name: string;
+  orig_path: string;
+  signature: string;
+  sha256: string;
+  scan_id?: number;
+  status: "held" | "restored" | "deleted";
+  orig_mode: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export const getQuarantine = () => api<{ items: QuarantineItem[] }>("/quarantine");
+export const quarantineFile = (body: { path: string; signature: string; scan_id?: number; finding_id?: number }) =>
+  api<QuarantineItem>("/quarantine", { method: "POST", body });
+export const restoreQuarantine = (id: number) => api<QuarantineItem>(`/quarantine/${id}/restore`, { method: "POST" });
+export const deleteQuarantine = (id: number) => api<QuarantineItem>(`/quarantine/${id}/delete`, { method: "POST" });
+
 export type Job = {
   id: number;
   kind: string;
