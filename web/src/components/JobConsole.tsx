@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getJob } from "../api/client";
 import { useEvents } from "../lib/useEvents";
 import { Alert } from "./ui";
@@ -16,6 +16,17 @@ export default function JobConsole({ jobId, onDone }: Props) {
   const preRef = useRef<HTMLPreElement>(null);
   const doneFired = useRef(false);
 
+  // fireDone reports a terminal status to the parent exactly once. Kept stable
+  // (onDone read through a ref) so the fetch effect below need not depend on it.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const fireDone = useCallback((st: string) => {
+    if ((st === "done" || st === "error") && !doneFired.current) {
+      doneFired.current = true;
+      onDoneRef.current?.(st);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     getJob(jobId)
@@ -24,12 +35,15 @@ export default function JobConsole({ jobId, onDone }: Props) {
         if (j.log) setLines(j.log.replace(/\n$/, "").split("\n"));
         setStatus(j.status);
         if (j.error) setError(j.error);
+        // A fast job can finish before the SSE stream is subscribed, so the
+        // "job" event never arrives. Fire onDone from the initial fetch too.
+        fireDone(j.status);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [jobId]);
+  }, [jobId, fireDone]);
 
   useEvents(
     (ev) => {
@@ -41,10 +55,7 @@ export default function JobConsole({ jobId, onDone }: Props) {
         const st = String(d.status);
         setStatus(st);
         if (d.error) setError(String(d.error));
-        if ((st === "done" || st === "error") && !doneFired.current) {
-          doneFired.current = true;
-          onDone?.(st as "done" | "error");
-        }
+        fireDone(st);
       }
     },
     ["job", "job-log"],

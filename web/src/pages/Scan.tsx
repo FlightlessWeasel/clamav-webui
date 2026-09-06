@@ -1,10 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { createScan, type ScanOptions } from "../api/client";
+import { createScan, getScan, type Scan as ScanRow, type ScanOptions } from "../api/client";
 import { Alert, Button, Card } from "../components/ui";
 import PathPicker from "../components/PathPicker";
 import JobConsole from "../components/JobConsole";
 import FindingsTable from "../components/FindingsTable";
+import { humanDuration } from "../lib/format";
+
+// elapsed renders the wall-clock scan duration; "under a second" when the
+// timestamps are missing or the scan was near-instant.
+function elapsed(s: ScanRow): string {
+  if (!s.started_at || !s.finished_at) return "under a second";
+  const ms = Date.parse(s.finished_at + "Z") - Date.parse(s.started_at + "Z");
+  if (!Number.isFinite(ms) || ms < 1000) return "under a second";
+  return humanDuration(ms / 1000);
+}
+
+// scanSummary is the one-line result banner shown when a scan finishes.
+function scanSummary(s: ScanRow): string {
+  const files = `${s.scanned} file${s.scanned === 1 ? "" : "s"}`;
+  const verdict = s.infected ? `${s.infected} infected` : "no threats found";
+  return `Scanned ${files} in ${elapsed(s)} — ${verdict}.`;
+}
 
 export default function Scan() {
   const navigate = useNavigate();
@@ -13,8 +30,18 @@ export default function Scan() {
   const [jobId, setJobId] = useState<number>();
   const [scanId, setScanId] = useState<number>();
   const [done, setDone] = useState(false);
+  const [result, setResult] = useState<ScanRow>();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
+
+  // When the job finishes, pull the final scan row so we can show a summary —
+  // a quick scan can complete before any progress is visible on screen.
+  useEffect(() => {
+    if (!done || !scanId) return;
+    getScan(scanId)
+      .then(setResult)
+      .catch(() => {});
+  }, [done, scanId]);
 
   const launch = async () => {
     setBusy(true);
@@ -118,7 +145,7 @@ export default function Scan() {
       {jobId && scanId && (
         <>
           <Card
-            title="Running"
+            title={!done ? "Running" : result?.status === "error" ? "Failed" : "Completed"}
             actions={
               <Button variant="secondary" onClick={() => navigate(`/scans/${scanId}`)}>
                 Open scan detail
@@ -127,6 +154,9 @@ export default function Scan() {
           >
             <JobConsole jobId={jobId} onDone={() => setDone(true)} />
           </Card>
+          {done && result && result.status !== "error" && (
+            <Alert kind={result.infected ? "error" : "success"}>{scanSummary(result)}</Alert>
+          )}
           <Card title="Findings">
             <FindingsTable scanId={scanId} running={!done} />
           </Card>

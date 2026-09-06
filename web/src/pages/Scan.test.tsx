@@ -5,10 +5,18 @@ import { MemoryRouter } from "react-router-dom";
 
 const createScan = vi.fn();
 const browse = vi.fn();
+const getJob = vi.fn();
 vi.mock("../api/client", () => ({
   createScan: (...a: unknown[]) => createScan(...a),
   browse: (...a: unknown[]) => browse(...a),
-  getJob: vi.fn().mockResolvedValue({ id: 1, status: "running", log: "" }),
+  getJob: (...a: unknown[]) => getJob(...a),
+  getScan: vi.fn().mockResolvedValue({
+    id: 9,
+    status: "done",
+    paths: ["/srv/data"],
+    scanned: 12,
+    infected: 0,
+  }),
   getScanFindings: vi.fn().mockResolvedValue({ findings: [] }),
   quarantineFile: vi.fn(),
 }));
@@ -19,6 +27,8 @@ import Scan from "./Scan";
 beforeEach(() => {
   createScan.mockReset();
   browse.mockReset();
+  getJob.mockReset();
+  getJob.mockResolvedValue({ id: 1, status: "running", log: "" });
   browse.mockResolvedValue({
     path: "/srv",
     parent: "/",
@@ -53,6 +63,22 @@ describe("Scan page", () => {
 
     await userEvent.click(launch);
     await waitFor(() => expect(createScan).toHaveBeenCalledWith(["/srv/data"], expect.objectContaining({ recursive: true })));
+  });
+
+  it("shows a completion summary when the job is already finished on first fetch", async () => {
+    createScan.mockResolvedValue({ job_id: 5, scan_id: 9 });
+    getJob.mockResolvedValue({ id: 5, status: "done", log: "/srv/data: OK\n" });
+    renderScan();
+
+    await waitFor(() => expect(screen.getByText(/readme.txt/)).toBeInTheDocument());
+    await userEvent.click(screen.getByText("add folder"));
+    await userEvent.click(screen.getByRole("button", { name: /Scan .* path/ }));
+
+    await waitFor(() => expect(screen.getByText("Completed")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Scanned 12 files in under a second — no threats found.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Scanning…")).not.toBeInTheDocument();
   });
 
   it("adds a manually typed path", async () => {
