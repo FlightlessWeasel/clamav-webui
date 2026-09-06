@@ -3,9 +3,10 @@ import { getImageScan, putImageScan, type ImageScanConfig } from "../api/client"
 import { useAsync } from "../lib/useAsync";
 import { Alert, Button, Card, Spinner } from "./ui";
 
-// ImageScanSettings toggles loop-mounting disk-image scan targets. clamd will
-// not read a multi-GB image past its size limits, so a raw scan of one returns
-// "clean" without inspecting anything; mounting exposes the real files.
+// ImageScanSettings toggles expanding disk-image scan targets to their
+// contents. clamd will not read a multi-GB image past its size limits, so a raw
+// scan of one returns "clean" without inspecting anything; mounting (or, where
+// a mount is refused, extracting) exposes the real files.
 export default function ImageScanSettings() {
   const { data, error, loading, reload } = useAsync(() => getImageScan(), []);
   const [cfg, setCfg] = useState<ImageScanConfig | null>(null);
@@ -24,9 +25,10 @@ export default function ImageScanSettings() {
     setBusy(true);
     setMsg(undefined);
     try {
-      const cleaned = {
+      const cleaned: ImageScanConfig = {
         enabled: cfg.enabled,
         extensions: cfg.extensions.map((e) => e.trim()).filter(Boolean),
+        extract_dir: cfg.extract_dir.trim(),
       };
       await putImageScan(cleaned);
       reload();
@@ -55,7 +57,7 @@ export default function ImageScanSettings() {
           checked={cfg.enabled}
           onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
         />
-        Loop-mount disk images and scan their contents
+        Expand disk images and scan their contents
       </label>
 
       <label className="mt-3 block text-sm">
@@ -68,11 +70,24 @@ export default function ImageScanSettings() {
         />
       </label>
 
+      <label className="mt-3 block text-sm">
+        <span className="text-zinc-500">Extraction scratch directory (optional)</span>
+        <input
+          className="mt-1 w-full rounded border border-zinc-300 bg-white px-2 py-1 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+          value={cfg.extract_dir}
+          onChange={(e) => setCfg({ ...cfg, extract_dir: e.target.value })}
+          placeholder="/var/lib/clamav-webui/extract"
+        />
+      </label>
+
       <p className="mt-2 text-xs text-zinc-500">
         A scan target with one of these extensions is mounted read-only (<code>nodev,nosuid,noexec</code>) and its
-        files are scanned individually; a failed mount falls back to scanning the raw image. Mounting runs the
-        kernel filesystem drivers as root — only enable it for images from sources you trust. Large files inside an
-        image are still subject to clamd's <code>MaxFileSize</code> / <code>MaxScanSize</code>.
+        files are scanned individually. If the mount is refused — e.g. inside an unprivileged container — the image
+        is instead extracted with <code>7zz</code>/<code>7z</code> (or <code>bsdtar</code>) into the scratch
+        directory and scanned there; that copies the whole image, so point it at a filesystem with room for the
+        largest one (a <code>clamav-webui</code> subdir is created and cleaned up). If neither works the raw image
+        is scanned as-is. Mounting runs kernel filesystem drivers as root — only enable this for images you trust.
+        Large files inside an image are still subject to clamd's <code>MaxFileSize</code> / <code>MaxScanSize</code>.
       </p>
     </Card>
   );

@@ -9,13 +9,21 @@ import (
 )
 
 // MountConfig controls whether disk-image scan targets (.iso and friends) are
-// loop-mounted and scanned by their contents instead of as one opaque blob.
-// clamd/clamscan will not read a multi-GB image past its size limits, so a raw
-// scan of a large image returns "clean" almost instantly without inspecting
-// anything; mounting exposes the individual files, which are what matters.
+// expanded to their contents before scanning, instead of handed to clamd as one
+// opaque blob. clamd/clamscan will not read a multi-GB image past its size
+// limits, so a raw scan of a large image returns "clean" almost instantly
+// without inspecting anything; the individual files inside are what matter.
+//
+// The image is loop-mounted read-only when possible, and otherwise extracted to
+// a scratch directory (ExtractDir) — the fallback for environments where a loop
+// mount is not permitted, e.g. an unprivileged container.
 type MountConfig struct {
 	Enabled    bool     `json:"enabled"`
 	Extensions []string `json:"extensions"`
+	// ExtractDir is the scratch root for the extract fallback. Empty means "let
+	// the caller pick" (it uses a directory under the app state dir). Extraction
+	// copies the whole image, so this should have room for the largest one.
+	ExtractDir string `json:"extract_dir"`
 }
 
 // DefaultMountConfig is the off-by-default configuration. Mounting an untrusted
@@ -42,7 +50,7 @@ func (c MountConfig) normalizedExts() []string {
 }
 
 // Sanitized returns cfg with its extension list normalized (see normalizedExts)
-// and de-duplicated. The returned Extensions slice is non-nil.
+// and de-duplicated, and ExtractDir trimmed. The Extensions slice is non-nil.
 func (c MountConfig) Sanitized() MountConfig {
 	seen := map[string]bool{}
 	out := []string{}
@@ -52,10 +60,10 @@ func (c MountConfig) Sanitized() MountConfig {
 			out = append(out, e)
 		}
 	}
-	return MountConfig{Enabled: c.Enabled, Extensions: out}
+	return MountConfig{Enabled: c.Enabled, Extensions: out, ExtractDir: strings.TrimSpace(c.ExtractDir)}
 }
 
-// IsImage reports whether path ends in one of the configured image extensions.
+// IsImage reports whether p ends in one of the configured image extensions.
 func (c MountConfig) IsImage(p string) bool {
 	lp := strings.ToLower(p)
 	for _, e := range c.normalizedExts() {
@@ -66,11 +74,12 @@ func (c MountConfig) IsImage(p string) bool {
 	return false
 }
 
-// MountedImage records one loop-mounted image and the directory its contents
-// were mounted at.
-type MountedImage struct {
-	Image string // original image path, e.g. /games/x.iso
-	Dir   string // mountpoint holding its contents
+// PreparedImage records one image target that was expanded to a directory of
+// its contents, and how — so cleanup knows whether to unmount or just delete.
+type PreparedImage struct {
+	Image     string // original image path, e.g. /games/x.iso
+	Dir       string // directory holding its contents
+	Extracted bool   // true = a copy to rm -rf; false = a loop mount to unmount
 }
 
 // imageMountOpts keeps an untrusted image from contributing devices, setuid
@@ -81,15 +90,17 @@ const imageMountOpts = "loop,ro,nodev,nosuid,noexec"
 // string lets mount(8) auto-detect; the rest cover images it cannot.
 var imageFSTypes = []string{"", "udf", "iso9660"}
 
-// MountImages loop-mounts every entry in targets that looks like a disk image
-// (per cfg) at a fresh directory under baseDir, and returns: the rewritten
-// target list (each image swapped for its mountpoint), the mounts that were
-// made, and a cleanup func. An image that fails to mount is left untouched in
-// the list so the raw blob is still scanned, and the reason is sent to logf.
+// PrepareImages expands every entry in targets that looks like a disk image
+// (per cfg) into a directory of its contents: a read-only loop mount under
+// mountBase, or — if mounting fails — an extraction under extractBase. It
+// returns the rewritten target list (each image swapped for its directory), the
+// images that were prepared, and a cleanup func.
 //
-// cleanup unmounts every mount and removes baseDir. It is always safe to call
-// (including when nothing was mounted) and should be deferred by the caller.
-func (m *Manager) MountImages(ctx context.Context, targets []string, cfg MountConfig, baseDir string, logf func(string)) (paths []string, mounts []MountedImage, cleanup func()) {
+// An image that can be neither mounted nor extracted is left in the list so the
+// raw blob is still scanned; the reason goes to logf. cleanup unmounts every
+// mount, deletes every extraction, and removes both base dirs. It is always
+// safe to call and should be deferred by the caller.
+func (m *Manager) PrepareImages(ctx context.Context, targets []string, cfg MountConfig, mountBase, extractBase string, logf func(string)) (paths []string, prepared []PreparedImage, cleanup func()) {
 	cleanup = func() {}
 	if !cfg.Enabled {
 		return targets, nil, cleanup
@@ -104,33 +115,47 @@ func (m *Manager) MountImages(ctx context.Context, targets []string, cfg MountCo
 			out = append(out, p)
 			continue
 		}
-		dir := path.Join(baseDir, strconv.Itoa(i))
-		if err := m.fsys.MkdirAll(dir, 0o700); err != nil {
-			logf("mount " + p + ": " + err.Error() + " (scanning the raw image instead)")
+
+		mdir := path.Join(mountBase, strconv.Itoa(i))
+		mErr := m.fsys.MkdirAll(mdir, 0o700)
+		if mErr == nil {
+			mErr = m.mountImage(ctx, p, mdir)
+		}
+		if mErr == nil {
+			logf("mounted " + p + " read-only at " + mdir)
+			prepared = append(prepared, PreparedImage{Image: p, Dir: mdir})
+			out = append(out, mdir)
+			continue
+		}
+		_ = m.fsys.Remove(mdir)
+		logf("mount " + p + ": " + mErr.Error())
+
+		edir := path.Join(extractBase, strconv.Itoa(i))
+		if err := m.extractImage(ctx, p, edir, logf); err != nil {
+			_ = m.fsys.RemoveAll(edir)
+			logf("extract " + p + ": " + err.Error() + " (scanning the raw image instead)")
 			out = append(out, p)
 			continue
 		}
-		if err := m.mountImage(ctx, p, dir); err != nil {
-			_ = m.fsys.Remove(dir)
-			logf("mount " + p + ": " + err.Error() + " (scanning the raw image instead)")
-			out = append(out, p)
-			continue
-		}
-		logf("mounted " + p + " read-only at " + dir)
-		mounts = append(mounts, MountedImage{Image: p, Dir: dir})
-		out = append(out, dir)
+		prepared = append(prepared, PreparedImage{Image: p, Dir: edir, Extracted: true})
+		out = append(out, edir)
 	}
 
-	made := mounts
+	done := prepared
 	cleanup = func() {
-		for _, mi := range made {
-			m.unmount(context.WithoutCancel(ctx), mi.Dir)
+		for _, pi := range done {
+			if pi.Extracted {
+				_ = m.fsys.RemoveAll(pi.Dir)
+			} else {
+				m.unmount(context.WithoutCancel(ctx), pi.Dir)
+			}
 		}
-		if baseDir != "" {
-			_ = m.fsys.RemoveAll(baseDir)
+		_ = m.fsys.RemoveAll(mountBase)
+		if extractBase != mountBase {
+			_ = m.fsys.RemoveAll(extractBase)
 		}
 	}
-	return out, mounts, cleanup
+	return out, prepared, cleanup
 }
 
 // mountImage tries each filesystem type in turn, returning nil on the first
@@ -156,6 +181,42 @@ func (m *Manager) mountImage(ctx context.Context, image, dir string) error {
 		}
 	}
 	return errors.New(strings.Join(msgs, "; "))
+}
+
+// extractImage unpacks a disk image into dir. 7-Zip (7zz, then 7z) handles UDF
+// as well as ISO9660/Joliet; bsdtar (libarchive) is the ISO9660-only fallback.
+// Output is streamed to logf so a long extraction is visible in the job log.
+func (m *Manager) extractImage(ctx context.Context, image, dir string, logf func(string)) error {
+	var cmd Cmd
+	switch {
+	case m.has("7zz"):
+		cmd = Cmd{Name: "7zz", Args: []string{"x", "-bd", "-y", "-o" + dir, image}}
+	case m.has("7z"):
+		cmd = Cmd{Name: "7z", Args: []string{"x", "-bd", "-y", "-o" + dir, image}}
+	case m.has("bsdtar"):
+		cmd = Cmd{Name: "bsdtar", Args: []string{"-x", "-f", image, "-C", dir}}
+	default:
+		return errors.New("need 7zz/7z (7-Zip, reads UDF) or bsdtar to extract a disk image without mounting")
+	}
+	if err := m.fsys.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+
+	logf("extracting " + image + " with " + cmd.Name + " — this copies the whole image and can take a while")
+	err := m.run.Stream(ctx, cmd, logf)
+	if err == nil {
+		return nil
+	}
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		return errors.New(cmd.Name + " exited " + strconv.Itoa(ee.Code))
+	}
+	return err
+}
+
+func (m *Manager) has(name string) bool {
+	_, ok := m.run.LookPath(name)
+	return ok
 }
 
 // shortMountErr reduces a failed mount to its first, most useful line: mount(8)
@@ -184,24 +245,23 @@ func (m *Manager) unmount(ctx context.Context, dir string) {
 	_ = m.fsys.Remove(dir)
 }
 
-// RelabelPath rewrites any reference to a mounted image's contents back to the
+// RelabelPath rewrites any reference to a prepared image's contents back to the
 // "<image>!/<path within image>" shape ClamAV uses for archive members. It is
 // used both on a bare finding path and on a whole scanner output line; a string
-// with no mount prefix is returned unchanged.
-func RelabelPath(s string, mounts []MountedImage) string {
-	for _, mi := range mounts {
-		s = strings.ReplaceAll(s, mi.Dir+"/", mi.Image+"!/")
-		s = strings.ReplaceAll(s, mi.Dir, mi.Image)
+// with no prepared-dir prefix is returned unchanged.
+func RelabelPath(s string, prepared []PreparedImage) string {
+	for _, pi := range prepared {
+		s = strings.ReplaceAll(s, pi.Dir+"/", pi.Image+"!/")
+		s = strings.ReplaceAll(s, pi.Dir, pi.Image)
 	}
 	return s
 }
 
-// UnmountLeftovers unmounts anything still mounted under baseDir from a previous
-// process (a crash between mount and cleanup) and removes baseDir. Best effort;
-// intended to be called once at startup.
-func (m *Manager) UnmountLeftovers(ctx context.Context, baseDir string) {
+// UnmountLeftovers unmounts anything still mounted under any of baseDirs from a
+// previous process (a crash between prepare and cleanup) and removes each
+// baseDir. Best effort; intended to be called once at startup.
+func (m *Manager) UnmountLeftovers(ctx context.Context, baseDirs ...string) {
 	if b, err := m.fsys.ReadFile("/proc/self/mounts"); err == nil {
-		prefix := strings.TrimRight(baseDir, "/") + "/"
 		for _, line := range strings.Split(string(b), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) < 2 {
@@ -209,10 +269,17 @@ func (m *Manager) UnmountLeftovers(ctx context.Context, baseDir string) {
 			}
 			// Our mountpoints never contain spaces, so mount(8)'s \040 escaping
 			// does not matter and a plain prefix check is enough.
-			if mp := fields[1]; strings.HasPrefix(mp, prefix) {
-				m.unmount(ctx, mp)
+			mp := fields[1]
+			for _, base := range baseDirs {
+				if strings.HasPrefix(mp, strings.TrimRight(base, "/")+"/") {
+					m.unmount(ctx, mp)
+				}
 			}
 		}
 	}
-	_ = m.fsys.RemoveAll(baseDir)
+	for _, base := range baseDirs {
+		if base != "" {
+			_ = m.fsys.RemoveAll(base)
+		}
+	}
 }

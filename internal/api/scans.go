@@ -68,22 +68,26 @@ func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int6
 		slog.Error("scan: start row", "scan", scanID, "err", err)
 	}
 
-	// Loop-mount any disk-image targets (.iso, ...) so their contents are
-	// scanned rather than the opaque blob, which clamd would skip past its
-	// size limits. cleanupMounts unmounts and is safe when nothing mounted.
-	mountBase := path.Join(scanMountRoot(s.cfg.ConfigDir), strconv.FormatInt(scanID, 10))
-	scanPaths, mounts, cleanupMounts := s.clam.MountImages(
-		ctx, paths, s.scanMountConfig(), mountBase, func(l string) { jc.Logf("%s", l) })
-	defer cleanupMounts()
-	if len(mounts) > 0 {
-		opts.Recursive = true // walk the mounted trees
+	// Expand any disk-image targets (.iso, ...) to their contents — loop-mounted,
+	// or extracted when a mount isn't permitted — so the files inside get
+	// scanned rather than the opaque blob, which clamd would skip past its size
+	// limits. cleanupImages is safe when nothing was prepared.
+	id := strconv.FormatInt(scanID, 10)
+	mcfg := s.scanMountConfig()
+	mountBase := path.Join(scanMountRoot(s.cfg.ConfigDir), id)
+	extractBase := path.Join(s.scanExtractRoot(mcfg), id)
+	scanPaths, images, cleanupImages := s.clam.PrepareImages(
+		ctx, paths, mcfg, mountBase, extractBase, func(l string) { jc.Logf("%s", l) })
+	defer cleanupImages()
+	if len(images) > 0 {
+		opts.Recursive = true // walk the expanded trees
 	}
 
 	var lastFlush time.Time
 	res, scanErr := s.clam.Scan(ctx, scanPaths, opts, clamav.ScanCallbacks{
-		Line: func(line string) { jc.Logf("%s", clamav.RelabelPath(line, mounts)) },
+		Line: func(line string) { jc.Logf("%s", clamav.RelabelPath(line, images)) },
 		Finding: func(f clamav.ScanFinding) {
-			label := clamav.RelabelPath(f.Path, mounts)
+			label := clamav.RelabelPath(f.Path, images)
 			if _, err := s.db.AddFinding(scanID, label, f.Signature); err != nil {
 				slog.Error("scan: add finding", "scan", scanID, "err", err)
 			}

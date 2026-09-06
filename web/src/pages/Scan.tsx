@@ -87,7 +87,7 @@ export default function Scan() {
                     {looksLikeImage(p) &&
                       (imageScan?.enabled ? (
                         <span className="text-emerald-600 dark:text-emerald-400">
-                          disk image — will be mounted and its contents scanned
+                          disk image — its contents will be scanned (mounted, or extracted)
                         </span>
                       ) : (
                         <span className="text-amber-600 dark:text-amber-500">

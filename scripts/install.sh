@@ -13,8 +13,9 @@ set -euo pipefail
 #   --with-clamav : after the service is up, apt-install clamav + clamav-daemon
 #                   + clamav-freshclam so the box is immediately usable.
 #
-# Every run also loads the loop + udf kernel modules and sets them to load at
-# boot, so the optional "scan disk images" feature works.
+# Every run also sets up the prerequisites for the optional "scan disk images"
+# feature: loads the loop + udf kernel modules (persisted for boot) and installs
+# 7zip / libarchive-tools for the extraction fallback. All best-effort.
 #
 # No Go or Node toolchain required. It pulls the prebuilt archives that
 # GoReleaser publishes to GitHub Releases.
@@ -154,21 +155,32 @@ ensure_state() {
   chmod 0700 "$STATE_DIR"
 }
 
-# ── kernel modules for disk-image scanning ──────────────
-# The optional "mount disk images" scan feature loop-mounts .iso/.udf/.img
-# targets: that needs the loop driver, and udf for game/optical images. Load
-# them now and on every boot. Best-effort — a container or locked-down host may
-# forbid modprobe, and the feature is off by default.
-ensure_kmods() {
+# ── prerequisites for disk-image scanning ───────────────
+# The optional "scan disk images" feature expands .iso/.udf/.img targets to
+# their contents. Preferred path is a read-only loop mount (needs the loop
+# driver, plus udf for game/optical images); where a mount is refused (an
+# unprivileged container) it extracts the image with 7-Zip / bsdtar instead.
+# All best-effort — a locked-down host may forbid modprobe, and the feature is
+# off by default.
+ensure_prereqs() {
   local conf="/etc/modules-load.d/${SVC_NAME}.conf" m
   for m in loop udf; do
     modprobe "$m" 2>/dev/null \
-      || echo "    note: kernel module '$m' not loaded — disk-image scanning may need it" >&2
+      || echo "    note: kernel module '$m' not loaded — disk-image mounting may need it" >&2
   done
   { echo "# Added by the ${SVC_NAME} installer for disk-image scanning."; echo loop; echo udf; } \
     > "$conf" 2>/dev/null \
     && echo "    loop/udf set to load at boot via ${conf}" \
     || echo "    note: could not write ${conf}" >&2
+
+  if command -v apt-get >/dev/null 2>&1; then
+    # 7zip (7zz) reads UDF; p7zip-full (7z) is the older fallback; bsdtar covers
+    # plain ISO9660. Install whichever the archive has; don't fail the run.
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends 7zip 2>/dev/null \
+      || DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends p7zip-full 2>/dev/null \
+      || echo "    note: could not install 7zip/p7zip-full — extraction fallback unavailable" >&2
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libarchive-tools 2>/dev/null || true
+  fi
 }
 
 # ── systemd unit ────────────────────────────────────────
@@ -243,7 +255,7 @@ $DO_OS_UPGRADE && os_upgrade
 
 # Runs on every invocation (including an --update that is already current) so
 # existing installs pick up the disk-image scanning prerequisites too.
-ensure_kmods
+ensure_prereqs
 
 ARCH="$(detect_arch)"
 

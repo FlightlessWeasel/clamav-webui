@@ -93,9 +93,10 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		slog.Error("scheduler start", "err", err)
 	}
 
-	// Clear any image mounts a previous process left behind (crash between
-	// mount and cleanup).
-	s.clam.UnmountLeftovers(context.Background(), scanMountRoot(cfg.ConfigDir))
+	// Clear any image mounts or extractions a previous process left behind
+	// (crash between prepare and cleanup).
+	s.clam.UnmountLeftovers(context.Background(),
+		scanMountRoot(cfg.ConfigDir), s.scanExtractRoot(s.scanMountConfig()))
 
 	go s.runFreshnessMonitor(bgCtx)
 	if os.Getenv("CLAMWEB_DEV_SIM") != "1" {

@@ -31,7 +31,7 @@ func TestMountConfigIsImage(t *testing.T) {
 }
 
 func TestMountConfigSanitized(t *testing.T) {
-	in := MountConfig{Enabled: true, Extensions: []string{"ISO", " .iso ", "", ".IMG", "img"}}
+	in := MountConfig{Enabled: true, Extensions: []string{"ISO", " .iso ", "", ".IMG", "img"}, ExtractDir: " /scratch "}
 	got := in.Sanitized()
 	if !got.Enabled {
 		t.Error("Enabled dropped")
@@ -39,51 +39,49 @@ func TestMountConfigSanitized(t *testing.T) {
 	if want := []string{".iso", ".img"}; !reflect.DeepEqual(got.Extensions, want) {
 		t.Errorf("Extensions = %v, want %v", got.Extensions, want)
 	}
+	if got.ExtractDir != "/scratch" {
+		t.Errorf("ExtractDir = %q, want trimmed", got.ExtractDir)
+	}
 	empty := MountConfig{}.Sanitized()
 	if empty.Extensions == nil {
 		t.Error("Extensions should be non-nil even when empty")
 	}
 }
 
-func TestMountImagesDisabledIsNoOp(t *testing.T) {
+func TestPrepareImagesDisabledIsNoOp(t *testing.T) {
 	m := NewManagerWithRunner(config.Defaults(), newFake())
 	in := []string{"/games/x.iso", "/srv/data"}
-	out, mounts, cleanup := m.MountImages(context.Background(), in, MountConfig{Enabled: false}, t.TempDir(), nil)
+	out, prepared, cleanup := m.PrepareImages(context.Background(), in, MountConfig{Enabled: false}, t.TempDir(), t.TempDir(), nil)
 	defer cleanup()
-	if !reflect.DeepEqual(out, in) || mounts != nil {
-		t.Fatalf("disabled: out=%v mounts=%v", out, mounts)
+	if !reflect.DeepEqual(out, in) || prepared != nil {
+		t.Fatalf("disabled: out=%v prepared=%v", out, prepared)
 	}
 }
 
-func TestMountImagesMountsScanAndRelabels(t *testing.T) {
-	base := t.TempDir()
-	mp := path.Join(base, "0")
+func TestPrepareImagesMountsScanAndRelabels(t *testing.T) {
+	mbase, ebase := t.TempDir(), t.TempDir()
+	mp := path.Join(mbase, "0")
 	f := newFake().on("mount -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp, fakeResp{})
 	f.on("umount "+mp, fakeResp{})
 	m := NewManagerWithRunner(config.Defaults(), f)
 
 	cfg := MountConfig{Enabled: true, Extensions: []string{".iso"}}
-	out, mounts, cleanup := m.MountImages(context.Background(), []string{"/games/x.iso", "/srv/data"}, cfg, base, nil)
+	out, prepared, cleanup := m.PrepareImages(context.Background(), []string{"/games/x.iso", "/srv/data"}, cfg, mbase, ebase, nil)
 
 	if want := []string{mp, "/srv/data"}; !reflect.DeepEqual(out, want) {
 		t.Fatalf("out = %v, want %v", out, want)
 	}
-	if len(mounts) != 1 || mounts[0].Image != "/games/x.iso" || mounts[0].Dir != mp {
-		t.Fatalf("mounts = %+v", mounts)
+	if len(prepared) != 1 || prepared[0].Image != "/games/x.iso" || prepared[0].Dir != mp || prepared[0].Extracted {
+		t.Fatalf("prepared = %+v", prepared)
 	}
-	if got := RelabelPath(path.Join(mp, "evil/setup.exe"), mounts); got != "/games/x.iso!/evil/setup.exe" {
+	if got := RelabelPath(path.Join(mp, "evil/setup.exe"), prepared); got != "/games/x.iso!/evil/setup.exe" {
 		t.Errorf("relabel nested = %q", got)
 	}
-	if got := RelabelPath(mp, mounts); got != "/games/x.iso" {
-		t.Errorf("relabel root = %q", got)
-	}
-	if got := RelabelPath("/srv/data/f", mounts); got != "/srv/data/f" {
-		t.Errorf("relabel outside = %q", got)
-	}
-	// A whole scanner output line, not just a bare path.
-	line := mp + "/evil.exe: Win.Test.EICAR_HDB-1 FOUND"
-	if got := RelabelPath(line, mounts); got != "/games/x.iso!/evil.exe: Win.Test.EICAR_HDB-1 FOUND" {
+	if got := RelabelPath(mp+"/evil.exe: Win.Test.EICAR_HDB-1 FOUND", prepared); got != "/games/x.iso!/evil.exe: Win.Test.EICAR_HDB-1 FOUND" {
 		t.Errorf("relabel line = %q", got)
+	}
+	if got := RelabelPath("/srv/data/f", prepared); got != "/srv/data/f" {
+		t.Errorf("relabel outside = %q", got)
 	}
 
 	cleanup()
@@ -92,37 +90,62 @@ func TestMountImagesMountsScanAndRelabels(t *testing.T) {
 	}
 }
 
-func TestMountImagesFallsBackToRawImageOnFailure(t *testing.T) {
-	base := t.TempDir()
-	mp := path.Join(base, "0")
-	// Every filesystem type fails; mount(8) writes the real reason to stderr
-	// and only signals failure through a generic exit code.
-	f := newFake().
-		on("mount -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp,
-			fakeResp{err: errors.New("exit status 32"), stderr: "mount: /games/x.iso: wrong fs type, bad option, bad superblock\n"}).
-		on("mount -t udf -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp,
-			fakeResp{err: errors.New("exit status 32"), stderr: "mount: unknown filesystem type 'udf'.\n"}).
-		on("mount -t iso9660 -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp,
-			fakeResp{err: errors.New("exit status 32"), stderr: "mount: /games/x.iso: wrong fs type, bad option, bad superblock\n"})
+func TestPrepareImagesExtractsWhenMountFails(t *testing.T) {
+	mbase, ebase := t.TempDir(), t.TempDir()
+	mp, ep := path.Join(mbase, "0"), path.Join(ebase, "0")
+	f := newFake().have("7z")
+	for _, k := range []string{
+		"mount -o loop,ro,nodev,nosuid,noexec /games/x.iso " + mp,
+		"mount -t udf -o loop,ro,nodev,nosuid,noexec /games/x.iso " + mp,
+		"mount -t iso9660 -o loop,ro,nodev,nosuid,noexec /games/x.iso " + mp,
+	} {
+		f.on(k, fakeResp{err: errors.New("exit status 32"), stderr: "mount: /mnt: must be superuser to use mount.\n"})
+	}
+	f.on("7z x -bd -y -o"+ep+" /games/x.iso", fakeResp{stdout: "Everything is Ok\n"})
 	m := NewManagerWithRunner(config.Defaults(), f)
 
 	var logs []string
-	out, mounts, cleanup := m.MountImages(context.Background(), []string{"/games/x.iso"},
-		MountConfig{Enabled: true, Extensions: []string{".iso"}}, base, func(l string) { logs = append(logs, l) })
+	out, prepared, cleanup := m.PrepareImages(context.Background(), []string{"/games/x.iso"},
+		MountConfig{Enabled: true, Extensions: []string{".iso"}}, mbase, ebase, func(l string) { logs = append(logs, l) })
+	defer cleanup()
+
+	if want := []string{ep}; !reflect.DeepEqual(out, want) {
+		t.Fatalf("out = %v, want the extraction dir %q", out, ep)
+	}
+	if len(prepared) != 1 || !prepared[0].Extracted || prepared[0].Dir != ep {
+		t.Fatalf("prepared = %+v, want one extracted entry", prepared)
+	}
+	if !contains(f.calls, "7z x -bd -y -o"+ep+" /games/x.iso") {
+		t.Errorf("7z not invoked: %v", f.calls)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "must be superuser") || !strings.Contains(joined, "extracting /games/x.iso") {
+		t.Errorf("log missing mount reason / extract notice: %q", joined)
+	}
+}
+
+func TestPrepareImagesNoExtractorFallsBackToRawImage(t *testing.T) {
+	mbase, ebase := t.TempDir(), t.TempDir()
+	mp := path.Join(mbase, "0")
+	f := newFake() // no mount responses, no 7z/bsdtar on PATH
+	for _, k := range []string{
+		"mount -o loop,ro,nodev,nosuid,noexec /games/x.iso " + mp,
+		"mount -t udf -o loop,ro,nodev,nosuid,noexec /games/x.iso " + mp,
+		"mount -t iso9660 -o loop,ro,nodev,nosuid,noexec /games/x.iso " + mp,
+	} {
+		f.on(k, fakeResp{err: errors.New("exit status 32")})
+	}
+	m := NewManagerWithRunner(config.Defaults(), f)
+
+	out, prepared, cleanup := m.PrepareImages(context.Background(), []string{"/games/x.iso"},
+		MountConfig{Enabled: true, Extensions: []string{".iso"}}, mbase, ebase, nil)
 	defer cleanup()
 
 	if want := []string{"/games/x.iso"}; !reflect.DeepEqual(out, want) {
 		t.Fatalf("out = %v, want raw image kept", out)
 	}
-	if len(mounts) != 0 {
-		t.Fatalf("mounts = %+v, want none", mounts)
-	}
-	joined := strings.Join(logs, "\n")
-	if !strings.Contains(joined, "wrong fs type") || !strings.Contains(joined, "unknown filesystem type 'udf'") {
-		t.Errorf("mount stderr not surfaced in log: %q", joined)
-	}
-	if strings.Contains(joined, "exit status 32") {
-		t.Errorf("bare exit code leaked instead of the real message: %q", joined)
+	if len(prepared) != 0 {
+		t.Fatalf("prepared = %+v, want none", prepared)
 	}
 }
 
@@ -134,7 +157,7 @@ func TestUnmountLeftovers(t *testing.T) {
 	f := newFake().on("umount "+base+"/7/0", fakeResp{}).on("umount "+base+"/7/1", fakeResp{})
 	m := NewManagerWithDeps(config.Defaults(), f, ffs)
 
-	m.UnmountLeftovers(context.Background(), base)
+	m.UnmountLeftovers(context.Background(), base, "/var/lib/clamav-webui/extract")
 
 	for _, want := range []string{"umount " + base + "/7/0", "umount " + base + "/7/1"} {
 		if !contains(f.calls, want) {
@@ -142,7 +165,7 @@ func TestUnmountLeftovers(t *testing.T) {
 		}
 	}
 	if contains(f.calls, "umount /") {
-		t.Error("unmounted a path outside the base dir")
+		t.Error("unmounted a path outside the base dirs")
 	}
 }
 

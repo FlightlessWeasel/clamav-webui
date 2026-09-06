@@ -238,11 +238,13 @@ export const getNotifications = () => api<NotifyConfig>("/notifications");
 export const putNotifications = (cfg: NotifyConfig) => api<NotifyConfig>("/notifications", { method: "PUT", body: cfg });
 export const testNotification = () => api<{ result: string }>("/notifications/test", { method: "POST" });
 
-// ImageScanConfig controls loop-mounting disk-image scan targets (.iso, ...)
-// and scanning their contents instead of the raw blob.
+// ImageScanConfig controls expanding disk-image scan targets (.iso, ...) to
+// their contents — loop-mounted, or extracted when a mount isn't permitted —
+// instead of scanning the raw blob.
 export type ImageScanConfig = {
   enabled: boolean;
   extensions: string[];
+  extract_dir: string;
 };
 export const getImageScan = () => api<ImageScanConfig>("/scan-mount");
 export const putImageScan = (cfg: ImageScanConfig) =>

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/FlightlessWeasel/clamav-webui/internal/clamav"
 )
@@ -14,6 +15,17 @@ import (
 // Slash-joined because ClamAV reports the paths it finds with forward slashes.
 func scanMountRoot(configDir string) string {
 	return path.Join(filepath.ToSlash(configDir), "mnt")
+}
+
+// scanExtractRoot is where the extract fallback unpacks images. Under a
+// configured ExtractDir (which needs room for the largest image) the app keeps
+// to its own "clamav-webui" subdirectory, since it deletes this tree wholesale
+// on cleanup and at startup; with no ExtractDir it uses <state dir>/extract.
+func (s *Server) scanExtractRoot(cfg clamav.MountConfig) string {
+	if d := strings.TrimSpace(cfg.ExtractDir); d != "" {
+		return path.Join(filepath.ToSlash(d), "clamav-webui")
+	}
+	return path.Join(filepath.ToSlash(s.cfg.ConfigDir), "extract")
 }
 
 // scanMountConfig loads the disk-image auto-mount configuration, falling back to

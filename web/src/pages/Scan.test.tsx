@@ -18,7 +18,7 @@ vi.mock("../api/client", () => ({
     infected: 0,
   }),
   getScanFindings: vi.fn().mockResolvedValue({ findings: [] }),
-  getImageScan: vi.fn().mockResolvedValue({ enabled: false, extensions: [".iso", ".udf", ".img"] }),
+  getImageScan: vi.fn().mockResolvedValue({ enabled: false, extensions: [".iso", ".udf", ".img"], extract_dir: "" }),
   quarantineFile: vi.fn(),
 }));
 vi.mock("../lib/useEvents", () => ({ useEvents: () => {} }));

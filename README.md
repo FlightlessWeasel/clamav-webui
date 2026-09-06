@@ -5,7 +5,7 @@ A single Go binary with an embedded web UI to install, update, and operate
 
 - Install and upgrade ClamAV via `apt`
 - On-demand and scheduled scans with live progress
-- Optional loop-mounting of disk-image targets (`.iso`, `.udf`, `.img`) to scan their contents
+- Optional disk-image scanning: `.iso` / `.udf` / `.img` targets are loop-mounted (or extracted with 7-Zip where a mount is refused) and their contents scanned
 - Signature updates (`freshclam`) and freshness monitoring
 - Quarantine: hold, restore, delete infected files
 - Manage the `clamav-daemon`, `clamav-freshclam` and `clamav-clamonacc` services

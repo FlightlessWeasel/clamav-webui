@@ -50,6 +50,11 @@ nfpms:
       - clamav
       - clamav-daemon
       - clamav-freshclam
+      # Disk-image scanning: 7zip (7zz) reads UDF, p7zip-full (7z) is the older
+      # fallback, libarchive-tools (bsdtar) covers plain ISO9660.
+      - 7zip
+      - p7zip-full
+      - libarchive-tools
     contents:
       - src: packaging/clamav-webui.service
         dst: /lib/systemd/system/clamav-webui.service
