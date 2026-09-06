@@ -55,6 +55,16 @@ func (m *Manager) OnAccessStatus(ctx context.Context) (OnAccessStatus, error) {
 			st.Prevention = len(e.Values) > 0 && confValueBool(e.Values[0])
 		}
 	}
+	// The SPA expects array fields to always be arrays, never JSON null.
+	if st.WatchPaths == nil {
+		st.WatchPaths = []string{}
+	}
+	if st.ExcludePaths == nil {
+		st.ExcludePaths = []string{}
+	}
+	if st.ExcludeUnames == nil {
+		st.ExcludeUnames = []string{}
+	}
 	return st, nil
 }
 

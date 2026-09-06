@@ -46,6 +46,37 @@ func TestConfigGetAndPut(t *testing.T) {
 	}
 }
 
+// The SPA assumes array-typed JSON fields are always arrays (client.ts types
+// them string[]); Go nil slices marshal as null and crash the pages. Regression
+// test: every array field these GETs emit must be [] rather than null.
+func TestGetEndpointsReturnArraysNotJSONNull(t *testing.T) {
+	r := newStub()
+	r.files["clamd.conf"] = "LogVerbose no\n"
+	r.files["freshclam.conf"] = "Checks 24\n"
+	s, cookies, _ := authedServer(t, r)
+
+	checks := []struct{ path, want, notWant string }{
+		{"/api/config/clamd", `"values":[]`, `"values":null`},
+		{"/api/config/freshclam", `"values":[]`, `"values":null`},
+		{"/api/onaccess", `"watch_paths":[]`, `"watch_paths":null`},
+		{"/api/onaccess", `"exclude_unames":[]`, `"exclude_unames":null`},
+		{"/api/notifications", `"events":[]`, `"events":null`},
+	}
+	for _, c := range checks {
+		resp := do(t, s, http.MethodGet, c.path, "", cookies, "")
+		if resp.Code != http.StatusOK {
+			t.Errorf("%s: status = %d body=%s", c.path, resp.Code, resp.Body)
+			continue
+		}
+		if strings.Contains(resp.Body.String(), c.notWant) {
+			t.Errorf("%s: JSON null array leaked to client: %s", c.path, resp.Body)
+		}
+		if !strings.Contains(resp.Body.String(), c.want) {
+			t.Errorf("%s: want %s in body: %s", c.path, c.want, resp.Body)
+		}
+	}
+}
+
 func TestOnAccessGetPut(t *testing.T) {
 	r := newStub()
 	r.have["clamonacc"] = true

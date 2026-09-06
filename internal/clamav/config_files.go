@@ -105,7 +105,11 @@ func (m *Manager) ReadConf(which string) (ConfView, error) {
 
 	view := ConfView{Which: which, Path: path, Unit: unit}
 	for _, k := range keys {
-		view.Entries = append(view.Entries, ConfEntry{ConfKey: k, Values: values[k.Name]})
+		vals := values[k.Name]
+		if vals == nil {
+			vals = []string{} // the SPA expects arrays, never JSON null
+		}
+		view.Entries = append(view.Entries, ConfEntry{ConfKey: k, Values: vals})
 	}
 	return view, nil
 }

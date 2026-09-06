@@ -8,8 +8,18 @@ import (
 	"github.com/FlightlessWeasel/clamav-webui/internal/notify"
 )
 
+// redactedNotify is the GET/PUT response body: redacted secrets and a
+// guaranteed-non-nil Events slice (the SPA assumes arrays, never JSON null).
+func redactedNotify(d *notify.Dispatcher) notify.Config {
+	cfg := d.Config().Redacted()
+	if cfg.Events == nil {
+		cfg.Events = []string{}
+	}
+	return cfg
+}
+
 func (s *Server) handleGetNotifications(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.notify.Config().Redacted())
+	writeJSON(w, http.StatusOK, redactedNotify(s.notify))
 }
 
 func (s *Server) handlePutNotifications(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +36,7 @@ func (s *Server) handlePutNotifications(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.notify.Config().Redacted())
+	writeJSON(w, http.StatusOK, redactedNotify(s.notify))
 }
 
 func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) {
