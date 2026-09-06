@@ -13,6 +13,9 @@ set -euo pipefail
 #   --with-clamav : after the service is up, apt-install clamav + clamav-daemon
 #                   + clamav-freshclam so the box is immediately usable.
 #
+# Every run also loads the loop + udf kernel modules and sets them to load at
+# boot, so the optional "scan disk images" feature works.
+#
 # No Go or Node toolchain required. It pulls the prebuilt archives that
 # GoReleaser publishes to GitHub Releases.
 #
@@ -151,6 +154,23 @@ ensure_state() {
   chmod 0700 "$STATE_DIR"
 }
 
+# ── kernel modules for disk-image scanning ──────────────
+# The optional "mount disk images" scan feature loop-mounts .iso/.udf/.img
+# targets: that needs the loop driver, and udf for game/optical images. Load
+# them now and on every boot. Best-effort — a container or locked-down host may
+# forbid modprobe, and the feature is off by default.
+ensure_kmods() {
+  local conf="/etc/modules-load.d/${SVC_NAME}.conf" m
+  for m in loop udf; do
+    modprobe "$m" 2>/dev/null \
+      || echo "    note: kernel module '$m' not loaded — disk-image scanning may need it" >&2
+  done
+  { echo "# Added by the ${SVC_NAME} installer for disk-image scanning."; echo loop; echo udf; } \
+    > "$conf" 2>/dev/null \
+    && echo "    loop/udf set to load at boot via ${conf}" \
+    || echo "    note: could not write ${conf}" >&2
+}
+
 # ── systemd unit ────────────────────────────────────────
 # Kept in sync with packaging/clamav-webui.service (the .deb ships that copy).
 # Runs as root; no sandboxing directives (needs apt/systemctl/fanotify).
@@ -220,6 +240,10 @@ install_clamav() {
 
 # ── main ────────────────────────────────────────────────
 $DO_OS_UPGRADE && os_upgrade
+
+# Runs on every invocation (including an --update that is already current) so
+# existing installs pick up the disk-image scanning prerequisites too.
+ensure_kmods
 
 ARCH="$(detect_arch)"
 
