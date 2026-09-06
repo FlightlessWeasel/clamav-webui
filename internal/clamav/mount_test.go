@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,11 +95,15 @@ func TestMountImagesMountsScanAndRelabels(t *testing.T) {
 func TestMountImagesFallsBackToRawImageOnFailure(t *testing.T) {
 	base := t.TempDir()
 	mp := path.Join(base, "0")
-	// Every filesystem type fails.
+	// Every filesystem type fails; mount(8) writes the real reason to stderr
+	// and only signals failure through a generic exit code.
 	f := newFake().
-		on("mount -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp, fakeResp{err: errors.New("no")}).
-		on("mount -t udf -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp, fakeResp{err: errors.New("no")}).
-		on("mount -t iso9660 -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp, fakeResp{err: errors.New("no")})
+		on("mount -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp,
+			fakeResp{err: errors.New("exit status 32"), stderr: "mount: /games/x.iso: wrong fs type, bad option, bad superblock\n"}).
+		on("mount -t udf -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp,
+			fakeResp{err: errors.New("exit status 32"), stderr: "mount: unknown filesystem type 'udf'.\n"}).
+		on("mount -t iso9660 -o loop,ro,nodev,nosuid,noexec /games/x.iso "+mp,
+			fakeResp{err: errors.New("exit status 32"), stderr: "mount: /games/x.iso: wrong fs type, bad option, bad superblock\n"})
 	m := NewManagerWithRunner(config.Defaults(), f)
 
 	var logs []string
@@ -112,8 +117,12 @@ func TestMountImagesFallsBackToRawImageOnFailure(t *testing.T) {
 	if len(mounts) != 0 {
 		t.Fatalf("mounts = %+v, want none", mounts)
 	}
-	if len(logs) == 0 {
-		t.Error("expected a log line explaining the mount failure")
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "wrong fs type") || !strings.Contains(joined, "unknown filesystem type 'udf'") {
+		t.Errorf("mount stderr not surfaced in log: %q", joined)
+	}
+	if strings.Contains(joined, "exit status 32") {
+		t.Errorf("bare exit code leaked instead of the real message: %q", joined)
 	}
 }
 

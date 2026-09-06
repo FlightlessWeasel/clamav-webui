@@ -2,6 +2,7 @@ package clamav
 
 import (
 	"context"
+	"errors"
 	"path"
 	"strconv"
 	"strings"
@@ -133,22 +134,44 @@ func (m *Manager) MountImages(ctx context.Context, targets []string, cfg MountCo
 }
 
 // mountImage tries each filesystem type in turn, returning nil on the first
-// success and the last error if none work.
+// success. If none work it returns an error carrying mount(8)'s own message(s)
+// for each distinct failure — "exit status 32" alone tells the operator
+// nothing.
 func (m *Manager) mountImage(ctx context.Context, image, dir string) error {
-	var lastErr error
+	seen := map[string]bool{}
+	var msgs []string
 	for _, fstype := range imageFSTypes {
 		args := make([]string, 0, 6)
 		if fstype != "" {
 			args = append(args, "-t", fstype)
 		}
 		args = append(args, "-o", imageMountOpts, image, dir)
-		_, err := m.run.Run(ctx, Cmd{Name: "mount", Args: args})
+		res, err := m.run.Run(ctx, Cmd{Name: "mount", Args: args})
 		if err == nil {
 			return nil
 		}
-		lastErr = err
+		if msg := shortMountErr(err, res.Stderr); !seen[msg] {
+			seen[msg] = true
+			msgs = append(msgs, msg)
+		}
 	}
-	return lastErr
+	return errors.New(strings.Join(msgs, "; "))
+}
+
+// shortMountErr reduces a failed mount to its first, most useful line: mount(8)
+// writes the real reason ("unknown filesystem type", "failed to setup loop
+// device: ...", "wrong fs type, bad option, bad superblock ...") to stderr and
+// only signals it through a generic exit code.
+func shortMountErr(err error, stderr []byte) string {
+	s := strings.TrimSpace(string(stderr))
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	s = strings.TrimPrefix(s, "mount: ")
+	if s == "" {
+		return err.Error()
+	}
+	return s
 }
 
 // unmount detaches dir and removes the (now empty) mountpoint. A busy mount —
