@@ -45,6 +45,9 @@ func (f *fakeFS) WriteFile(name string, data []byte, _ os.FileMode) error {
 	return nil
 }
 
+func (f *fakeFS) MkdirAll(string, os.FileMode) error { return nil }
+func (f *fakeFS) RemoveAll(string) error             { return nil }
+
 func (f *fakeFS) Rename(oldpath, newpath string) error {
 	ob, nb := filepath.Base(oldpath), filepath.Base(newpath)
 	ff, ok := f.files[ob]

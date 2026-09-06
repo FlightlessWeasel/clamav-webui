@@ -1,4 +1,5 @@
 import ConfEditor from "../components/ConfEditor";
+import ImageScanSettings from "../components/ImageScanSettings";
 import NotificationSettings from "../components/NotificationSettings";
 import PasswordSettings from "../components/PasswordSettings";
 
@@ -7,6 +8,7 @@ export default function Settings() {
     <>
       <h1 className="text-lg font-semibold">Settings</h1>
 
+      <ImageScanSettings />
       <NotificationSettings />
       <PasswordSettings />
 

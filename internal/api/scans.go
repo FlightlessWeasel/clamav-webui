@@ -68,15 +68,27 @@ func (s *Server) runScan(ctx context.Context, jc *worker.JobContext, scanID int6
 		slog.Error("scan: start row", "scan", scanID, "err", err)
 	}
 
+	// Loop-mount any disk-image targets (.iso, ...) so their contents are
+	// scanned rather than the opaque blob, which clamd would skip past its
+	// size limits. cleanupMounts unmounts and is safe when nothing mounted.
+	mountBase := path.Join(scanMountRoot(s.cfg.ConfigDir), strconv.FormatInt(scanID, 10))
+	scanPaths, mounts, cleanupMounts := s.clam.MountImages(
+		ctx, paths, s.scanMountConfig(), mountBase, func(l string) { jc.Logf("%s", l) })
+	defer cleanupMounts()
+	if len(mounts) > 0 {
+		opts.Recursive = true // walk the mounted trees
+	}
+
 	var lastFlush time.Time
-	res, scanErr := s.clam.Scan(ctx, paths, opts, clamav.ScanCallbacks{
-		Line: func(line string) { jc.Logf("%s", line) },
+	res, scanErr := s.clam.Scan(ctx, scanPaths, opts, clamav.ScanCallbacks{
+		Line: func(line string) { jc.Logf("%s", clamav.RelabelPath(line, mounts)) },
 		Finding: func(f clamav.ScanFinding) {
-			if _, err := s.db.AddFinding(scanID, f.Path, f.Signature); err != nil {
+			label := clamav.RelabelPath(f.Path, mounts)
+			if _, err := s.db.AddFinding(scanID, label, f.Signature); err != nil {
 				slog.Error("scan: add finding", "scan", scanID, "err", err)
 			}
 			s.bus.Publish(sse.Event{Type: "scan-finding", Data: map[string]any{
-				"scan_id": scanID, "path": f.Path, "signature": f.Signature,
+				"scan_id": scanID, "path": label, "signature": f.Signature,
 			}})
 		},
 		Progress: func(scanned, infected int) {

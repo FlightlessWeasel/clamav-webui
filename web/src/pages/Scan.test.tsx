@@ -18,6 +18,7 @@ vi.mock("../api/client", () => ({
     infected: 0,
   }),
   getScanFindings: vi.fn().mockResolvedValue({ findings: [] }),
+  getImageScan: vi.fn().mockResolvedValue({ enabled: false, extensions: [".iso", ".udf", ".img"] }),
   quarantineFile: vi.fn(),
 }));
 vi.mock("../lib/useEvents", () => ({ useEvents: () => {} }));
@@ -89,5 +90,16 @@ describe("Scan page", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add path" }));
 
     expect(screen.getByText("/var/www")).toBeInTheDocument();
+  });
+
+  it("flags a disk-image target when mounting is disabled", async () => {
+    renderScan();
+    await waitFor(() => expect(screen.getByText(/readme.txt/)).toBeInTheDocument());
+
+    await userEvent.type(screen.getByPlaceholderText("/path/to/scan"), "/games/x.iso");
+    await userEvent.click(screen.getByRole("button", { name: "Add path" }));
+
+    expect(screen.getByText(/a raw scan skips its contents/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /enable disk-image scanning/ })).toBeInTheDocument();
   });
 });

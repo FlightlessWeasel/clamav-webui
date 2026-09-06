@@ -102,6 +102,10 @@ func (s *SimRunner) Remove(name string) error {
 	return nil
 }
 
+// MkdirAll / RemoveAll: the simulator has no directory tree to model.
+func (s *SimRunner) MkdirAll(string, os.FileMode) error { return nil }
+func (s *SimRunner) RemoveAll(string) error             { return nil }
+
 type simFileInfo struct {
 	name string
 	size int64

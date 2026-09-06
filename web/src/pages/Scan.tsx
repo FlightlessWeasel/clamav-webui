@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { createScan, getScan, type Scan as ScanRow, type ScanOptions } from "../api/client";
+import { Link, useNavigate } from "react-router-dom";
+import { createScan, getImageScan, getScan, type Scan as ScanRow, type ScanOptions } from "../api/client";
 import { Alert, Button, Card } from "../components/ui";
 import PathPicker from "../components/PathPicker";
 import JobConsole from "../components/JobConsole";
 import FindingsTable from "../components/FindingsTable";
+import { useAsync } from "../lib/useAsync";
 import { humanDuration } from "../lib/format";
 
 // elapsed renders the wall-clock scan duration; "under a second" when the
@@ -33,6 +34,11 @@ export default function Scan() {
   const [result, setResult] = useState<ScanRow>();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
+
+  // Disk-image mount config, so we can flag .iso-style targets before launch.
+  const { data: imageScan } = useAsync(() => getImageScan(), []);
+  const imageExts = imageScan?.extensions ?? [];
+  const looksLikeImage = (p: string) => imageExts.some((e) => p.toLowerCase().endsWith(e.toLowerCase()));
 
   // When the job finishes, pull the final scan row so we can show a summary —
   // a quick scan can complete before any progress is visible on screen.
@@ -70,7 +76,7 @@ export default function Scan() {
             {paths.length > 0 && (
               <ul className="mt-2 space-y-1 text-xs">
                 {paths.map((p) => (
-                  <li key={p} className="flex items-center gap-2">
+                  <li key={p} className="flex flex-wrap items-center gap-2">
                     <span className="font-mono">{p}</span>
                     <button
                       className="text-zinc-500 hover:text-red-600"
@@ -78,6 +84,19 @@ export default function Scan() {
                     >
                       remove
                     </button>
+                    {looksLikeImage(p) &&
+                      (imageScan?.enabled ? (
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          disk image — will be mounted and its contents scanned
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-500">
+                          disk image — a raw scan skips its contents;{" "}
+                          <Link to="/settings" className="underline">
+                            enable disk-image scanning
+                          </Link>
+                        </span>
+                      ))}
                   </li>
                 ))}
               </ul>

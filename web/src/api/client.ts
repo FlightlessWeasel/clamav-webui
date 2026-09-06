@@ -238,6 +238,16 @@ export const getNotifications = () => api<NotifyConfig>("/notifications");
 export const putNotifications = (cfg: NotifyConfig) => api<NotifyConfig>("/notifications", { method: "PUT", body: cfg });
 export const testNotification = () => api<{ result: string }>("/notifications/test", { method: "POST" });
 
+// ImageScanConfig controls loop-mounting disk-image scan targets (.iso, ...)
+// and scanning their contents instead of the raw blob.
+export type ImageScanConfig = {
+  enabled: boolean;
+  extensions: string[];
+};
+export const getImageScan = () => api<ImageScanConfig>("/scan-mount");
+export const putImageScan = (cfg: ImageScanConfig) =>
+  api<ImageScanConfig>("/scan-mount", { method: "PUT", body: cfg });
+
 export const getQuarantine = () => api<{ items: QuarantineItem[] }>("/quarantine");
 export const quarantineFile = (body: { path: string; signature: string; scan_id?: number; finding_id?: number }) =>
   api<QuarantineItem>("/quarantine", { method: "POST", body });

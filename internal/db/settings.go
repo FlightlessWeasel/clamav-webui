@@ -13,6 +13,7 @@ type Settings struct {
 	SessionSecret     string
 	ScanDefaultsJSON  string
 	NotifyConfigJSON  string
+	ScanMountJSON     string
 }
 
 // GetSettings reads the singleton settings row (id = 1).
@@ -20,10 +21,10 @@ func (d *DB) GetSettings() (Settings, error) {
 	var s Settings
 	err := d.QueryRow(`
 		SELECT setup_complete, admin_password_hash, session_secret,
-		       scan_defaults_json, notify_config_json
+		       scan_defaults_json, notify_config_json, scan_mount_json
 		FROM settings WHERE id = 1`).
 		Scan(&s.SetupComplete, &s.AdminPasswordHash, &s.SessionSecret,
-			&s.ScanDefaultsJSON, &s.NotifyConfigJSON)
+			&s.ScanDefaultsJSON, &s.NotifyConfigJSON, &s.ScanMountJSON)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -45,6 +46,12 @@ func (d *DB) SetAdminPassword(hash string) error {
 // SetNotifyConfig stores the notification configuration JSON.
 func (d *DB) SetNotifyConfig(jsonStr string) error {
 	_, err := d.Exec(`UPDATE settings SET notify_config_json = ?, updated_at = datetime('now') WHERE id = 1`, jsonStr)
+	return err
+}
+
+// SetScanMountConfig stores the disk-image auto-mount configuration JSON.
+func (d *DB) SetScanMountConfig(jsonStr string) error {
+	_, err := d.Exec(`UPDATE settings SET scan_mount_json = ?, updated_at = datetime('now') WHERE id = 1`, jsonStr)
 	return err
 }
 

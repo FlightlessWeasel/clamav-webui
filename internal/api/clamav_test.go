@@ -25,6 +25,17 @@ type stubRunner struct {
 	have  map[string]bool
 	lines map[string][]string
 	files map[string]string // basename -> content ("" ok); presence = Stat succeeds
+	calls []string          // every Run/Stream command line, in order
+}
+
+// saw reports whether the given command line was executed.
+func (s *stubRunner) saw(cmdline string) bool {
+	for _, c := range s.calls {
+		if c == cmdline {
+			return true
+		}
+	}
+	return false
 }
 
 func newStub() *stubRunner {
@@ -55,6 +66,9 @@ func (s *stubRunner) WriteFile(name string, data []byte, _ os.FileMode) error {
 	return nil
 }
 
+func (s *stubRunner) MkdirAll(string, os.FileMode) error { return nil }
+func (s *stubRunner) RemoveAll(string) error             { return nil }
+
 func (s *stubRunner) Rename(oldPath, newPath string) error {
 	ob, nb := path.Base(oldPath), path.Base(newPath)
 	c, ok := s.files[ob]
@@ -82,10 +96,12 @@ func (i stubInfo) Sys() any           { return nil }
 
 func (s *stubRunner) Run(_ context.Context, c clamav.Cmd) (clamav.Result, error) {
 	k := ckey(c)
+	s.calls = append(s.calls, k)
 	return clamav.Result{Stdout: []byte(s.out[k])}, s.err[k]
 }
 func (s *stubRunner) Stream(_ context.Context, c clamav.Cmd, onLine func(string)) error {
 	k := ckey(c)
+	s.calls = append(s.calls, k)
 	for _, l := range s.lines[k] {
 		onLine(l)
 	}

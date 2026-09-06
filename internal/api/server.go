@@ -93,6 +93,10 @@ func New(cfg config.Config, database *db.DB, version string) (*Server, error) {
 		slog.Error("scheduler start", "err", err)
 	}
 
+	// Clear any image mounts a previous process left behind (crash between
+	// mount and cleanup).
+	s.clam.UnmountLeftovers(context.Background(), scanMountRoot(cfg.ConfigDir))
+
 	go s.runFreshnessMonitor(bgCtx)
 	if os.Getenv("CLAMWEB_DEV_SIM") != "1" {
 		go s.runOnAccessTailer(bgCtx)
@@ -177,6 +181,9 @@ func (s *Server) routes() http.Handler {
 			r.Get("/notifications", s.handleGetNotifications)
 			r.Put("/notifications", s.handlePutNotifications)
 			r.Post("/notifications/test", s.handleTestNotification)
+
+			r.Get("/scan-mount", s.handleGetScanMount)
+			r.Put("/scan-mount", s.handlePutScanMount)
 
 			r.Get("/browse", s.handleBrowse)
 
